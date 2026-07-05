@@ -80,6 +80,15 @@ class GeminiImageClient:
                 headers={"x-goog-api-key": self._api_key},
             )
 
+        if response.status_code == 429:
+            raise DomainError(
+                "Gemini quota/rate limit exceeded (enable billing or retry later)",
+                "RATE_LIMITED",
+            )
+        if response.status_code >= 500:
+            raise DomainError(
+                f"Gemini upstream error (HTTP {response.status_code})", "PROVIDER_UNAVAILABLE"
+            )
         if response.status_code != 200:
             raise DomainError(
                 f"Gemini rejected the request (HTTP {response.status_code})", "PROVIDER_ERROR"

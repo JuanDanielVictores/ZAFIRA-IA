@@ -72,9 +72,31 @@ async def test_generate_without_image_raises_generation_rejected() -> None:
     assert exc_info.value.code == "GENERATION_REJECTED"
 
 
-async def test_generate_http_error_raises_provider_error() -> None:
+async def test_generate_429_raises_rate_limited() -> None:
     client = _client_with_transport(
         lambda request: httpx.Response(429, json={"error": {"message": "quota"}})
+    )
+
+    with pytest.raises(DomainError) as exc_info:
+        await client.generate(prompt="try on", images=[_PNG])
+
+    assert exc_info.value.code == "RATE_LIMITED"
+
+
+async def test_generate_5xx_raises_provider_unavailable() -> None:
+    client = _client_with_transport(
+        lambda request: httpx.Response(502, json={"error": {"message": "bad gateway"}})
+    )
+
+    with pytest.raises(DomainError) as exc_info:
+        await client.generate(prompt="try on", images=[_PNG])
+
+    assert exc_info.value.code == "PROVIDER_UNAVAILABLE"
+
+
+async def test_generate_other_4xx_raises_provider_error() -> None:
+    client = _client_with_transport(
+        lambda request: httpx.Response(400, json={"error": {"message": "bad request"}})
     )
 
     with pytest.raises(DomainError) as exc_info:

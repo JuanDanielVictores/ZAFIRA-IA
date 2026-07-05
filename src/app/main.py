@@ -46,8 +46,9 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(DomainError)
     async def domain_error_handler(_request: Request, exc: DomainError) -> JSONResponse:
+        transient = exc.code in {"RATE_LIMITED", "PROVIDER_UNAVAILABLE"}
         return JSONResponse(
-            status_code=422,
+            status_code=503 if transient else 422,
             content={"detail": exc.message, "code": exc.code},
         )
 
