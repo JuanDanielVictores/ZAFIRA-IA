@@ -38,5 +38,8 @@ class TryOnRequest(BaseModel):
 
 class TryOnResponse(BaseModel):
     external_ref: str
-    result_image_key: str = Field(description="Object storage key of the try-on result")
+    result_image_b64: str = Field(description="Base64-encoded bytes of the try-on result image")
+    result_image_key: str | None = Field(
+        default=None, description="Object storage key (only when storage is configured)"
+    )
     meta: dict[str, Any] = Field(default_factory=dict)

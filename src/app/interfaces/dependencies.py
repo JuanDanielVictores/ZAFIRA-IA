@@ -28,8 +28,10 @@ def get_image_fetcher() -> HttpImageFetcher:
 
 
 @lru_cache
-def get_storage_client() -> S3StorageClient:
+def get_storage_client() -> S3StorageClient | None:
     settings = get_settings()
+    if not settings.storage_endpoint_url:
+        return None
     return S3StorageClient(
         bucket=settings.storage_bucket,
         endpoint_url=settings.storage_endpoint_url,
@@ -77,7 +79,7 @@ def get_tryon_model() -> TryOnModel:
 def get_generate_avatar_use_case(
     fetcher: ImageFetcher = Depends(get_image_fetcher),
     model: AvatarModel = Depends(get_avatar_model),
-    storage: StorageClient = Depends(get_storage_client),
+    storage: StorageClient | None = Depends(get_storage_client),
 ) -> GenerateAvatarUseCase:
     return GenerateAvatarUseCase(fetcher=fetcher, model=model, storage=storage)
 
@@ -85,6 +87,6 @@ def get_generate_avatar_use_case(
 def get_generate_tryon_use_case(
     fetcher: ImageFetcher = Depends(get_image_fetcher),
     model: TryOnModel = Depends(get_tryon_model),
-    storage: StorageClient = Depends(get_storage_client),
+    storage: StorageClient | None = Depends(get_storage_client),
 ) -> GenerateTryOnUseCase:
     return GenerateTryOnUseCase(fetcher=fetcher, model=model, storage=storage)

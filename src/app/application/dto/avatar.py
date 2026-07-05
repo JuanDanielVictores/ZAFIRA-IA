@@ -34,5 +34,8 @@ class AvatarRequest(BaseModel):
 
 class AvatarResponse(BaseModel):
     external_ref: str
-    avatar_image_key: str = Field(description="Object storage key of the generated avatar")
+    avatar_image_b64: str = Field(description="Base64-encoded bytes of the generated avatar")
+    avatar_image_key: str | None = Field(
+        default=None, description="Object storage key (only when storage is configured)"
+    )
     meta: dict[str, Any] = Field(default_factory=dict)

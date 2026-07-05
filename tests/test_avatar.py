@@ -1,5 +1,7 @@
 """Avatar endpoint tests — no network, no MinIO (fakes via dependency_overrides)."""
 
+import base64
+
 from fastapi.testclient import TestClient
 
 from app.interfaces.dependencies import get_image_fetcher, get_storage_client
@@ -36,6 +38,7 @@ def test_generate_avatar_happy_path() -> None:
     assert data["avatar_image_key"] == "avatars/avatar-42.png"
     assert data["meta"]["model"] == "StubAvatarModel"
     assert data["meta"]["size_bytes"] == len(b"selfie-bytes")
+    assert base64.b64decode(data["avatar_image_b64"]) == b"selfie-bytes"
 
     assert fetcher.requested == ["https://media.example.com/selfie.jpg"]
     assert storage.objects["avatars/avatar-42.png"] == b"selfie-bytes"

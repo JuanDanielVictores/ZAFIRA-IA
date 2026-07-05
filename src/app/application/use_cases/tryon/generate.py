@@ -1,6 +1,12 @@
-"""Try-on use case — fetch person + garment images, run the model, persist the result."""
+"""Try-on use case — fetch person + garment images, run the model, return the result.
+
+Storage upload is optional: when no storage backend is configured the caller
+receives only the base64 payload.
+"""
 
 from __future__ import annotations
+
+import base64
 
 from app.application.dto.tryon import TryOnRequest, TryOnResponse
 from app.infrastructure.ai.base import TryOnModel
@@ -9,7 +15,9 @@ from app.infrastructure.storage.base import StorageClient
 
 
 class GenerateTryOnUseCase:
-    def __init__(self, *, fetcher: ImageFetcher, model: TryOnModel, storage: StorageClient) -> None:
+    def __init__(
+        self, *, fetcher: ImageFetcher, model: TryOnModel, storage: StorageClient | None
+    ) -> None:
         self._fetcher = fetcher
         self._model = model
         self._storage = storage
@@ -24,11 +32,14 @@ class GenerateTryOnUseCase:
             params=request.params,
         )
 
-        key = f"tryons/{request.external_ref}.png"
-        await self._storage.upload(key=key, data=generated, content_type="image/png")
+        key: str | None = None
+        if self._storage is not None:
+            key = f"tryons/{request.external_ref}.png"
+            await self._storage.upload(key=key, data=generated, content_type="image/png")
 
         return TryOnResponse(
             external_ref=request.external_ref,
+            result_image_b64=base64.b64encode(generated).decode(),
             result_image_key=key,
             meta={"model": type(self._model).__name__, "size_bytes": len(generated)},
         )
