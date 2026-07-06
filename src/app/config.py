@@ -24,7 +24,7 @@ class Settings(BaseSettings):
 
     # 'stub' exercises the full pipeline (fetch → model → storage) without GPU
     # or provider network; 'hosted' delegates to a Replicate-style prediction API.
-    ai_backend: Literal["stub", "hosted", "gemini"] = Field(
+    ai_backend: Literal["stub", "hosted", "gemini", "hybrid"] = Field(
         default="stub", validation_alias="AI_BACKEND"
     )
 

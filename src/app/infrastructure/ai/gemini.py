@@ -25,8 +25,25 @@ TRYON_PROMPT_TEMPLATE = (
     "ignore and discard them — do NOT transfer any facial features, skin or body "
     "from IMAGE 2 onto the result.\n"
     "Output: the person from IMAGE 1, unchanged, now wearing the extracted "
-    "{garment_label} garment. Replace only the {garment_label} clothing. "
-    "Return only the final image."
+    "{garment_label} garment INSTEAD OF their current {garment_label} clothing. "
+    "CRITICAL: first completely REMOVE the person's original {garment_label} "
+    "clothing, then dress them with the new garment. The original garment must "
+    "NOT remain visible under, over or behind the new one — no layering, no "
+    "stacking. If the new garment covers less skin than the original (e.g. "
+    "shorts replacing long pants, or a t-shirt replacing a jacket), render the "
+    "newly exposed skin naturally. Replace ONLY the {garment_label} clothing. "
+    "ALL other clothing the person wears (shirts, pants, shoes, accessories) "
+    "must remain EXACTLY as in IMAGE 1 — same fit, same color, same shape, "
+    "pixel-faithful, with no restyling or redesign whatsoever.\n"
+    "MANDATORY: the new {garment_label} garment from IMAGE 2 MUST be clearly "
+    "and visibly worn by the person in the output. Returning IMAGE 1 "
+    "unchanged, or with the person still wearing their original "
+    "{garment_label} clothing, is an INCORRECT result — the garment swap must "
+    "always happen. This applies EVEN IF the new garment is the same kind of "
+    "clothing the person already wears (e.g. swapping jeans for different "
+    "jeans): you must still perform the replacement and accurately reproduce "
+    "the exact color, wash, fit and details of the garment in IMAGE 2, not "
+    "keep the original one. Return only the final image."
 )
 
 AVATAR_PROMPT = (
@@ -84,7 +101,13 @@ class GeminiImageClient:
         async with httpx.AsyncClient(timeout=self._timeout, transport=self._transport) as client:
             response = await client.post(
                 url,
-                json={"contents": [{"parts": parts}]},
+                json={
+                    "contents": [{"parts": parts}],
+                    # Temperatura media-baja: equilibrio entre fidelidad (no
+                    # alterar prendas ajenas) y accion (no devolver la imagen
+                    # sin aplicar la prenda nueva)
+                    "generationConfig": {"temperature": 0.35},
+                },
                 headers={"x-goog-api-key": self._api_key},
             )
 
