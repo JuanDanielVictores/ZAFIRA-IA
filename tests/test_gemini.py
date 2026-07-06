@@ -130,6 +130,23 @@ async def test_tryon_model_builds_prompt_by_garment_type() -> None:
     assert "lower-body" in fake.calls[0]["prompt"]
 
 
+async def test_tryon_prompt_locks_person_identity_to_first_image() -> None:
+    fake = FakeGeminiClient()
+    model = GeminiTryOnModel(client=fake)
+
+    await model.generate(
+        person_image=b"person",
+        garment_image=b"garment",
+        garment_type="upper_body",
+        params={},
+    )
+
+    prompt = fake.calls[0]["prompt"].lower()
+    assert "image 1" in prompt and "image 2" in prompt
+    assert "discard" in prompt or "ignore" in prompt
+    assert "face" in prompt
+
+
 async def test_tryon_model_honors_prompt_override() -> None:
     fake = FakeGeminiClient()
     model = GeminiTryOnModel(client=fake)

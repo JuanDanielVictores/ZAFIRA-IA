@@ -14,11 +14,19 @@ import httpx
 from app.domain.exceptions import DomainError
 
 TRYON_PROMPT_TEMPLATE = (
-    "Virtual try-on task. The first image is a person; the second image is a "
-    "{garment_label} garment product photo. Generate a photorealistic image of "
-    "the same person wearing that garment. Preserve the person's face, identity, "
-    "body pose and the background of the first image. Replace only the "
-    "{garment_label} clothing. Return only the final image."
+    "Virtual try-on task with two input images.\n"
+    "IMAGE 1 is the ONLY real person. It is the sole source of identity. You must "
+    "keep this person's face, facial features, facial structure, skin tone, hair, "
+    "eyes, expression, body and background EXACTLY as they are — pixel-faithful. "
+    "Never alter, beautify, swap, blend or regenerate the face or head of IMAGE 1.\n"
+    "IMAGE 2 is a {garment_label} garment product photo. Use it ONLY as a clothing "
+    "reference: extract the {garment_label} garment and nothing else. If IMAGE 2 "
+    "shows a model, mannequin, face, head, hands or any other person, completely "
+    "ignore and discard them — do NOT transfer any facial features, skin or body "
+    "from IMAGE 2 onto the result.\n"
+    "Output: the person from IMAGE 1, unchanged, now wearing the extracted "
+    "{garment_label} garment. Replace only the {garment_label} clothing. "
+    "Return only the final image."
 )
 
 AVATAR_PROMPT = (
