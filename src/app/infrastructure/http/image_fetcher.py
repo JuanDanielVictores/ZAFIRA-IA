@@ -10,6 +10,19 @@ from app.domain.exceptions import DomainError
 
 _MAX_IMAGE_BYTES = 15 * 1024 * 1024
 
+# Algunos CDN (ej. Etafashion) sirven imágenes reales con
+# content-type 'application/octet-stream': se valida por magic bytes.
+_SNIFFABLE_CONTENT_TYPES = {"application/octet-stream", "binary/octet-stream", ""}
+
+
+def _looks_like_image(data: bytes) -> bool:
+    return (
+        data.startswith(b"\xff\xd8\xff")  # JPEG
+        or data.startswith(b"\x89PNG\r\n\x1a\n")  # PNG
+        or (data[:4] == b"RIFF" and data[8:12] == b"WEBP")  # WEBP
+        or data.startswith((b"GIF87a", b"GIF89a"))  # GIF
+    )
+
 
 class ImageFetcher(Protocol):
     async def fetch(self, url: str) -> bytes: ...
@@ -43,7 +56,9 @@ class HttpImageFetcher:
                 content_type = (
                     response.headers.get("content-type", "").split(";")[0].strip().lower()
                 )
-                if not content_type.startswith("image/"):
+                if not content_type.startswith("image/") and (
+                    content_type not in _SNIFFABLE_CONTENT_TYPES
+                ):
                     raise DomainError(
                         f"URL did not return an image (got '{content_type or 'unknown'}')",
                         "IMAGE_INVALID_CONTENT_TYPE",
@@ -60,6 +75,14 @@ class HttpImageFetcher:
                     buffer.extend(chunk)
                     if len(buffer) > self._max_bytes:
                         raise DomainError("Image exceeds the allowed size", "IMAGE_TOO_LARGE")
-                return bytes(buffer)
+
+                data = bytes(buffer)
+                # Si el header no era image/*, validar por contenido real
+                if not content_type.startswith("image/") and not _looks_like_image(data):
+                    raise DomainError(
+                        f"URL did not return an image (got '{content_type or 'unknown'}')",
+                        "IMAGE_INVALID_CONTENT_TYPE",
+                    )
+                return data
         except httpx.HTTPError as exc:
             raise DomainError(f"Could not download image: {exc}", "IMAGE_FETCH_ERROR") from exc

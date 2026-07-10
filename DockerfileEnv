@@ -28,6 +28,9 @@ COPY src ./src
 
 RUN poetry install --no-interaction --no-ansi
 
+# Pillow para la deteccion de no-op en el try-on (comparacion de imagenes)
+RUN poetry run pip install "pillow>=10.0.0,<12.0.0"
+
 ENV PYTHONPATH=/app/src
 
 EXPOSE 8000

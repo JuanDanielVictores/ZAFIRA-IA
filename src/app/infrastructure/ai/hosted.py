@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import secrets
 import time
 from typing import Any
 
@@ -41,6 +42,10 @@ class HostedPredictionClient:
         self._model_ref = model_ref
         self._timeout = timeout_seconds
 
+    @property
+    def model_ref(self) -> str:
+        return self._model_ref
+
     async def run(self, input_payload: dict[str, Any]) -> bytes:
         headers = {"Authorization": f"Bearer {self._api_key}"}
         async with httpx.AsyncClient(headers=headers, timeout=30.0) as client:
@@ -51,13 +56,33 @@ class HostedPredictionClient:
     async def _create_prediction(
         self, client: httpx.AsyncClient, input_payload: dict[str, Any]
     ) -> dict[str, Any]:
-        response = await client.post(
-            f"{self._base_url}/predictions",
-            json={"version": self._model_ref, "input": input_payload},
-        )
+        # Tres formas de referenciar el modelo en Replicate:
+        #   "owner/name:version" -> /predictions con {"version": hash} (modelos comunidad)
+        #   "owner/name"         -> /models/{owner}/{name}/predictions (modelos oficiales)
+        #   hash de version      -> /predictions con {"version": hash}
+        if ":" in self._model_ref:
+            version = self._model_ref.split(":", 1)[1]
+            url = f"{self._base_url}/predictions"
+            body: dict[str, Any] = {"version": version, "input": input_payload}
+        elif "/" in self._model_ref:
+            url = f"{self._base_url}/models/{self._model_ref}/predictions"
+            body = {"input": input_payload}
+        else:
+            url = f"{self._base_url}/predictions"
+            body = {"version": self._model_ref, "input": input_payload}
+
+        response = await client.post(url, json=body)
+        if response.status_code == 402:
+            raise DomainError(
+                "Provider requires billing/credit (HTTP 402)", "RATE_LIMITED"
+            )
+        if response.status_code == 429:
+            raise DomainError("Provider rate limit (HTTP 429)", "RATE_LIMITED")
         if response.status_code not in (200, 201):
             raise DomainError(
-                f"Provider rejected prediction (HTTP {response.status_code})", "PROVIDER_ERROR"
+                f"Provider rejected prediction (HTTP {response.status_code}): "
+                f"{response.text[:200]}",
+                "PROVIDER_ERROR",
             )
         return response.json()
 
@@ -115,11 +140,27 @@ class HostedAvatarModel:
         return await self._client.run(payload)
 
 
-class HostedTryOnModel:
-    """Garment try-on on a hosted provider.
+# IDM-VTON usa nombres de categoria propios
+_IDM_VTON_CATEGORIES = {
+    "upper_body": "upper_body",
+    "lower_body": "lower_body",
+    "dress": "dresses",
+}
 
-    TODO: point TRYON_MODEL_REF to the chosen model version (CatVTON or
-    IDM-VTON on Replicate) and map its exact input schema in ``generate``.
+_GARMENT_DESCRIPTIONS = {
+    "upper_body": "upper body garment (shirt, t-shirt, blouse or jacket)",
+    "lower_body": "lower body garment (pants, jeans, shorts or skirt)",
+    "dress": "full body dress",
+}
+
+
+class HostedTryOnModel:
+    """Garment try-on on a hosted provider (Replicate).
+
+    Modelos soportados via TRYON_MODEL_REF:
+      - "kwai-kolors/kolors-virtual-try-on"  (Kolors — inputs human_img/garment_img)
+      - cualquier ref que contenga "idm-vton" (IDM-VTON — inputs human_img/garm_img
+        + category explicita, mejor para prendas lower_body)
     """
 
     def __init__(self, *, client: HostedPredictionClient) -> None:
@@ -133,11 +174,32 @@ class HostedTryOnModel:
         garment_type: str,
         params: dict[str, Any],
     ) -> bytes:
-        # TODO: rename keys to match the final model input schema.
-        payload: dict[str, Any] = {
-            "person_image": _as_data_uri(person_image),
-            "garment_image": _as_data_uri(garment_image),
-            "category": garment_type,
-            **params,
-        }
+        ref = self._client.model_ref.lower()
+        if "idm-vton" in ref:
+            category = _IDM_VTON_CATEGORIES.get(garment_type, "upper_body")
+            payload: dict[str, Any] = {
+                "human_img": _as_data_uri(person_image),
+                "garm_img": _as_data_uri(garment_image),
+                "category": category,
+                # La version base de IDM-VTON es de torso: pantalones y
+                # vestidos requieren la version DressCode del modelo
+                "force_dc": category in ("lower_body", "dresses"),
+                "garment_des": _GARMENT_DESCRIPTIONS.get(garment_type, "garment"),
+                # crop=True: sin esto, fotos que no son 3:4 se deforman
+                # (cabeza/cuerpo estirados)
+                "crop": True,
+                # mas pasos = mejor detalle en brazos/manos
+                "steps": 40,
+                # seed aleatoria: el default fijo (42) repite los mismos
+                # artefactos en cada reintento
+                "seed": secrets.randbelow(2**31),
+                **params,
+            }
+        else:
+            # Kolors Virtual Try-On (default)
+            payload = {
+                "human_img": _as_data_uri(person_image),
+                "garment_img": _as_data_uri(garment_image),
+                **params,
+            }
         return await self._client.run(payload)

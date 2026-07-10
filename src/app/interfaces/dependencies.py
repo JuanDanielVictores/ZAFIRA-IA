@@ -8,6 +8,7 @@ from app.application.use_cases.tryon.generate import GenerateTryOnUseCase
 from app.config import Settings, get_settings
 from app.infrastructure.ai.base import AvatarModel, TryOnModel
 from app.infrastructure.ai.gemini import GeminiAvatarModel, GeminiImageClient, GeminiTryOnModel
+from app.infrastructure.ai.hybrid import HybridTryOnModel
 from app.infrastructure.ai.hosted import (
     HostedAvatarModel,
     HostedPredictionClient,
@@ -75,7 +76,7 @@ def get_avatar_model() -> AvatarModel:
         return HostedAvatarModel(
             client=_hosted_client(settings, settings.avatar_model_ref, "AVATAR_MODEL_REF")
         )
-    if settings.ai_backend == "gemini":
+    if settings.ai_backend in ("gemini", "hybrid"):
         return GeminiAvatarModel(client=_gemini_client(settings))
     return StubAvatarModel()
 
@@ -89,6 +90,14 @@ def get_tryon_model() -> TryOnModel:
         )
     if settings.ai_backend == "gemini":
         return GeminiTryOnModel(client=_gemini_client(settings))
+    if settings.ai_backend == "hybrid":
+        # Torso/vestidos -> Gemini (pixel-fiel) · Piernas -> IDM-VTON DressCode
+        return HybridTryOnModel(
+            gemini_model=GeminiTryOnModel(client=_gemini_client(settings)),
+            hosted_model=HostedTryOnModel(
+                client=_hosted_client(settings, settings.tryon_model_ref, "TRYON_MODEL_REF")
+            ),
+        )
     return StubTryOnModel()
 
 
