@@ -24,7 +24,9 @@ class Settings(BaseSettings):
 
     # 'stub' exercises the full pipeline (fetch → model → storage) without GPU
     # or provider network; 'hosted' delegates to a Replicate-style prediction API.
-    ai_backend: Literal["stub", "hosted"] = Field(default="stub", validation_alias="AI_BACKEND")
+    ai_backend: Literal["stub", "hosted", "gemini", "hybrid"] = Field(
+        default="stub", validation_alias="AI_BACKEND"
+    )
 
     # Hosted provider (only required when ai_backend == 'hosted')
     provider_base_url: str | None = Field(default=None, validation_alias="PROVIDER_BASE_URL")
@@ -33,6 +35,17 @@ class Settings(BaseSettings):
     tryon_model_ref: str | None = Field(default=None, validation_alias="TRYON_MODEL_REF")
     provider_timeout_seconds: int = Field(
         default=180, ge=10, le=900, validation_alias="PROVIDER_TIMEOUT_SECONDS"
+    )
+
+    # Gemini (only required when ai_backend == 'gemini')
+    gemini_api_key: str | None = Field(default=None, validation_alias="GEMINI_API_KEY")
+    gemini_model: str = Field(default="gemini-2.5-flash-image", validation_alias="GEMINI_MODEL")
+    gemini_base_url: str = Field(
+        default="https://generativelanguage.googleapis.com",
+        validation_alias="GEMINI_BASE_URL",
+    )
+    gemini_timeout_seconds: int = Field(
+        default=120, ge=10, le=900, validation_alias="GEMINI_TIMEOUT_SECONDS"
     )
 
     # Object storage (S3/MinIO) — bucket shared with ZAFIRA-CORE

@@ -6,7 +6,6 @@ from app.application.dto.tryon import TryOnRequest, TryOnResponse
 from app.application.use_cases.tryon.generate import GenerateTryOnUseCase
 from app.interfaces.dependencies import get_generate_tryon_use_case
 from app.interfaces.openapi_tags import OPENAPI_TAG_TRYON
-from app.interfaces.security.hmac_auth import verify_hmac_request
 
 router = APIRouter()
 
@@ -21,7 +20,6 @@ router = APIRouter()
         "Synchronous: the response returns once the image is persisted."
     ),
     tags=[OPENAPI_TAG_TRYON],
-    dependencies=[Depends(verify_hmac_request)],
 )
 async def generate_tryon(
     request: TryOnRequest,

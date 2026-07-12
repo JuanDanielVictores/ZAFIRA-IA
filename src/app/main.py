@@ -1,44 +1,14 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
-from typing import Any
-
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
 
 from app.config import get_settings
 from app.domain.exceptions import DomainError
 from app.interfaces.api.v1 import api_router
 from app.interfaces.health import router as health_router
-from app.interfaces.security.hmac_auth import load_allowed_clients
-from app.interfaces.security.openapi import apply_hmac_security_to_openapi
-
-
-@asynccontextmanager
-async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-    # Stateless MVP: no database nor pooled clients to initialize yet.
-    # Fail fast si HMAC_ALLOWED_CLIENTS falta o es inválida: sin esto el primer
-    # request firmaría contra una config rota en vez de impedir el despliegue.
-    load_allowed_clients(get_settings())
-    yield
-
-
-def _build_openapi_schema(app: FastAPI) -> dict[str, Any]:
-    schema = get_openapi(
-        title=app.title,
-        version=app.version,
-        openapi_version=app.openapi_version,
-        description=app.description,
-        routes=app.routes,
-        tags=app.openapi_tags,
-    )
-    settings = get_settings()
-    apply_hmac_security_to_openapi(schema, settings.api_v1_prefix)
-    return schema
 
 
 def create_app() -> FastAPI:
@@ -57,20 +27,11 @@ def create_app() -> FastAPI:
             "ZAFIRA-IA — internal AI microservice. "
             "ZAFIRA-CORE (Django/Celery) → ZAFIRA-IA → AI models + object storage."
         ),
-        lifespan=lifespan,
         openapi_url="/openapi.json",
         docs_url="/docs" if settings.api_docs_enabled else None,
         redoc_url="/redoc" if settings.api_docs_enabled else None,
         openapi_tags=tags_metadata,
     )
-
-    def openapi() -> dict[str, Any]:
-        if app.openapi_schema:
-            return app.openapi_schema
-        app.openapi_schema = _build_openapi_schema(app)
-        return app.openapi_schema
-
-    app.openapi = openapi  # type: ignore[method-assign]
 
     app.add_middleware(
         CORSMiddleware,
@@ -85,8 +46,9 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(DomainError)
     async def domain_error_handler(_request: Request, exc: DomainError) -> JSONResponse:
+        transient = exc.code in {"RATE_LIMITED", "PROVIDER_UNAVAILABLE"}
         return JSONResponse(
-            status_code=422,
+            status_code=503 if transient else 422,
             content={"detail": exc.message, "code": exc.code},
         )
 

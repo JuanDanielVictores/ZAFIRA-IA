@@ -16,7 +16,7 @@ ZAFIRA-CORE sube la foto del usuario al storage, encola una tarea Celery y esa t
 
 ---
 
-## Stack
+## 🧱 Stack
 
 | Capa | Tecnología |
 |------|-----------|
@@ -32,7 +32,7 @@ Sin base de datos: el servicio es **stateless** en el MVP. El estado (avatares, 
 
 ---
 
-## Arquitectura por capas
+## 🏗️ Arquitectura por capas
 
 Calco de la arquitectura de `aether`:
 
@@ -58,7 +58,7 @@ Los use cases reciben `fetcher`, `model` y `storage` como interfaces (`Protocol`
 
 ---
 
-## Endpoints
+## 🔌 Endpoints
 
 | Endpoint | Auth | Descripción |
 |----------|------|-------------|
@@ -119,7 +119,7 @@ Errores de dominio (descarga fallida, content-type no imagen, proveedor caído) 
 
 ---
 
-## Autenticación HMAC
+## 🔐 Autenticación HMAC
 
 Todos los endpoints `/api/v1/*` exigen tres headers:
 
@@ -163,13 +163,13 @@ response = httpx.post(
 
 Si `HMAC_ALLOWED_CLIENTS` no está configurada, el servicio **se niega a arrancar** (fail-fast en el lifespan); no existe ningún cliente/secret por defecto.
 
-### Supuesto de confianza sobre las URLs
+### 🛡️ Supuesto de confianza sobre las URLs
 
 ZAFIRA-IA descarga las imágenes de las URLs que recibe (`source_image_url`, `person_image_url`, `garment_image_url`) **confiando en que el único caller es ZAFIRA-CORE**, que las genera él mismo (presigned URLs de su storage). No hay denylist SSRF — en local las URLs de MinIO son loopback, así que bloquear rangos privados rompería dev. Si algún día ZAFIRA-CORE propaga URLs derivadas de input de usuario sin validar, este servicio se convertiría en un proxy hacia la red interna: en ese momento hay que añadir validación de esquema/destino aquí.
 
 ---
 
-## Variables de entorno
+## ⚙️ Variables de entorno
 
 | Variable | Requerida | Descripción |
 |----------|-----------|-------------|
@@ -190,26 +190,154 @@ ZAFIRA-IA descarga las imágenes de las URLs que recibe (`source_image_url`, `pe
 
 ---
 
-## Cómo correr
+## 🚀 Cómo correr
+
+### 📋 Prerrequisitos
+
+| Herramienta | Versión | Para qué |
+|-------------|---------|----------|
+| 🐍 Python | **3.12.x** (ver `.python-version` → `3.12.11`) | Runtime |
+| 📦 Poetry | ≥ 2.0 | Gestión de dependencias y del entorno virtual |
+| 🔧 pyenv | (opcional, recomendado) | Fijar la versión exacta de Python |
+
+> ⚠️ **Un solo entorno virtual: el `.venv/` que crea Poetry.** Por `poetry.toml`
+> (`in-project = true`) el venv vive **dentro del proyecto** (`.venv/`), construido sobre
+> el Python **3.12.11** que aporta pyenv. **No crees un pyenv-virtualenv aparte** (tipo
+> `pyenv virtualenv ... zafira-ia`): sería redundante, y si nace de un Python 3.11 Poetry
+> lo rechazará (`Current Python version ... is not allowed by the project (^3.12)`).
+> El rol de cada pieza:
+> - **pyenv** → solo provee el Python 3.12.11 base (una *versión*, no un virtualenv).
+> - **`.python-version`** → fija ese 3.12.11 al entrar a la carpeta.
+> - **Poetry** → crea y administra `.venv/`. Es tu único entorno. ✅
+
+### 1️⃣ Instalación (común a WSL y Windows)
 
 ```bash
-# Instalar dependencias
-make install
+# Asegurar Python 3.12 (con pyenv)
+pyenv install 3.12.11   # solo si no lo tienes aún
+pyenv local 3.12.11     # escribe/respeta .python-version en la carpeta
 
-# Configurar entorno
-cp .env.example .env
+# Instalar dependencias → crea .venv/ dentro del proyecto
+make install            # equivale a: poetry install
 
-# Servidor de desarrollo (puerto 8002 — ZAFIRA-CORE usa 8000 y aether 8001)
-make dev
+# Configurar entorno (variables)
+cp .env.example .env    # 🪟 Windows PowerShell: Copy-Item .env.example .env
 
-# Lint (ruff format + check)
-make lint
-
-# Tests (sin red ni MinIO: los tests usan fakes vía dependency_overrides)
-make test
+# Verificar que todo arranca
+make test               # ✅ 18 tests, sin red ni MinIO (usan fakes)
+make dev                # 🌐 servidor de desarrollo en http://127.0.0.1:8002
 ```
 
-Docker:
+> 💡 Si tu prompt muestra otro entorno (p.ej. `(zafira-ia)`) ejecuta `pyenv deactivate`
+> y abre una terminal nueva: debe quedar `py 3.12.11`, no un virtualenv 3.11.
+
+### 🐧 WSL (Ubuntu sobre Windows) — recomendado
+
+```bash
+# Toolchain de Python (si NO usas pyenv)
+sudo apt update && sudo apt install -y python3.12 python3.12-venv pipx
+pipx install poetry
+
+# Dentro del repo (ver nota de filesystem abajo)
+make install
+cp .env.example .env
+make dev    # 🌐 http://127.0.0.1:8002
+```
+
+> 📂 **Trabaja en el filesystem nativo de WSL** (`~/Project_development/...`), **nunca bajo
+> `/mnt/c/...`**: el I/O de Poetry y pytest es mucho más rápido y evitas problemas de permisos.
+
+Comprobar que responde:
+
+```bash
+curl http://127.0.0.1:8002/health   # → {"status":"ok","version":"0.1.0"}
+# 📖 Docs interactivas (API_DOCS_ENABLED=true): http://127.0.0.1:8002/docs
+```
+
+### 🪟 Windows nativo (PowerShell)
+
+```powershell
+# Instalar Python 3.12 (winget) y Poetry
+winget install Python.Python.3.12
+py -3.12 -m pip install --user pipx
+py -3.12 -m pipx ensurepath
+pipx install poetry
+
+# Reabre la terminal para refrescar el PATH, luego en el repo:
+poetry install
+Copy-Item .env.example .env
+poetry run uvicorn app.main:app --reload --host 0.0.0.0 --port 8002
+```
+
+> ⚠️ `make` no viene con Windows. Usa los comandos `poetry run ...` directamente, o instala
+> `make` (`winget install GnuWin32.Make` / `choco install make`). Los targets viven en el
+> `Makefile`: `dev`, `lint`, `test`.
+
+### 🧠 Configuración en PyCharm
+
+#### 🎯 Paso clave: seleccionar el intérprete (el `.venv` de Poetry)
+
+El objetivo es que PyCharm use **el `.venv/` del proyecto** (Python 3.12.11), **no** un
+pyenv-virtualenv ni un Python global. Como el venv es in-project, basta con apuntarlo.
+
+**🐧 Si trabajas en WSL (PyCharm Professional):**
+
+1. 📂 **Abre el proyecto desde WSL** — `File → Remote Development → WSL`, o abre la ruta
+   `\\wsl$\Ubuntu\home\<usuario>\Project_development\Django\ZAFIRA-IA`. Edita siempre la
+   copia en WSL, no una en `C:\`.
+2. ⚙️ Ve a `File → Settings → Project: ZAFIRA-IA → Python Interpreter`.
+3. ➕ Pulsa **Add Interpreter → On WSL**. Elige tu distro (Ubuntu) y espera a que conecte.
+4. 🔌 Selecciona **Poetry Environment → Existing** y en *Interpreter* pon la ruta:
+   ```
+   /home/<usuario>/Project_development/Django/ZAFIRA-IA/.venv/bin/python
+   ```
+   (Si eliges *New environment* con el ejecutable de Poetry, PyCharm reusará igualmente el
+   `.venv` in-project porque así está configurado en `poetry.toml`.)
+5. ✅ Acepta. Abajo a la derecha debe aparecer **Python 3.12 (zafira-ia) [.venv]**.
+
+**🪟 Si trabajas en Windows nativo:**
+
+1. ⚙️ `File → Settings → Project → Python Interpreter → Add Interpreter → Add Local Interpreter`.
+2. 🔌 Pestaña **Poetry Environment → Existing environment** y apunta a:
+   ```
+   <ruta-del-proyecto>\.venv\Scripts\python.exe
+   ```
+3. ✅ Acepta y confirma que PyCharm muestra ese intérprete del `.venv`.
+
+> 🚫 **Nunca** selecciones `~/.pyenv/versions/zafira-ia/...` ni un Python del sistema:
+> solo el `.venv` del proyecto garantiza Python 3.12.11 y las dependencias correctas.
+
+#### ▶️ Run Configuration para el servidor (uvicorn)
+
+`Run → Edit Configurations… → ➕ → Python`:
+
+| Campo | Valor |
+|-------|-------|
+| **Name** | `dev (uvicorn)` |
+| ⚪ **Module name** (no *Script path*) | `uvicorn` |
+| **Parameters** | `app.main:app --reload --host 0.0.0.0 --port 8002` |
+| **Working directory** | la raíz del proyecto |
+| **Python interpreter** | el `.venv` configurado arriba |
+| **Environment variables** | añade `PYTHONPATH=src` 👇 |
+
+> 🔑 `PYTHONPATH=src` es **obligatorio**: el paquete `app` vive bajo `src/`, así que sin
+> esto uvicorn no encuentra `app.main`. Para cargar el `.env` instala el plugin **EnvFile**
+> y márcalo en la pestaña *EnvFile*, o copia las variables en *Environment variables*.
+
+Pulsa ▶️ y abre http://127.0.0.1:8002/docs.
+
+#### 🧪 Tests y 🧹 Ruff
+
+- **pytest**: `Settings → Tools → Python Integrated Tools → Testing → Default test runner: pytest`.
+  Luego click derecho sobre `tests/` → *Run*. La config (cobertura, asyncio) vive en `pyproject.toml`.
+- **Ruff**: instala el plugin *Ruff* y apúntalo a `.venv/bin/ruff` (o `.venv\Scripts\ruff.exe`)
+  para formatear y lintar al guardar.
+
+> ℹ️ **Nota:** el proyecto está bajo una carpeta `Django/` por convención del repositorio
+> padre, **pero es un servicio FastAPI**. No configures un "Django Server" en PyCharm —
+> usa la Run Configuration de uvicorn de arriba.
+
+### 🐳 Docker
 
 ```bash
 # Producción (multi-stage, non-root, puerto 8000 interno)
@@ -222,7 +350,7 @@ docker run --rm -p 8002:8000 --env-file .env zafira-ia-dev:local
 
 ---
 
-## Backends de IA
+## 🤖 Backends de IA
 
 ### `stub` (default)
 
@@ -242,7 +370,7 @@ Como los modelos corren en la infraestructura del proveedor, este servicio no ne
 
 ---
 
-## Roadmap — Fase 2
+## 🗺️ Roadmap — Fase 2
 
 - **Modo jobs asíncrono**: `POST /api/v1/avatar/jobs` devuelve `202` + `job_id` inmediato; la generación corre en background y ZAFIRA-IA hace `POST` al webhook de ZAFIRA-CORE firmado con HMAC (mismo patrón `BACKOFFICE_*` de aether). Necesario cuando la inferencia real supere los timeouts HTTP razonables.
 - Endpoint de *polling* `GET /api/v1/.../jobs/{job_id}` como fallback si el callback se pierde.

@@ -6,7 +6,6 @@ from app.application.dto.avatar import AvatarRequest, AvatarResponse
 from app.application.use_cases.avatar.generate import GenerateAvatarUseCase
 from app.interfaces.dependencies import get_generate_avatar_use_case
 from app.interfaces.openapi_tags import OPENAPI_TAG_AVATAR
-from app.interfaces.security.hmac_auth import verify_hmac_request
 
 router = APIRouter()
 
@@ -21,7 +20,6 @@ router = APIRouter()
         "response returns once the image is persisted."
     ),
     tags=[OPENAPI_TAG_AVATAR],
-    dependencies=[Depends(verify_hmac_request)],
 )
 async def generate_avatar(
     request: AvatarRequest,
