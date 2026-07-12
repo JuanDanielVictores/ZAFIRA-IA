@@ -54,8 +54,6 @@ WORKDIR /app
 
 COPY --from=builder /app/.venv /app/.venv
 COPY --from=builder /app/src /app/src
-# CWD at runtime is /app; Settings uses env_file=".env"
-COPY .env /app/.env
 COPY pyproject.toml poetry.toml /app/
 
 RUN chown -R "${APP_USER}:${APP_GROUP}" /app
