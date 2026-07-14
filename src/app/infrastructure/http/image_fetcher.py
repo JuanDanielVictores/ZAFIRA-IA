@@ -35,12 +35,29 @@ class HttpImageFetcher:
         timeout_seconds: float = 30.0,
         max_bytes: int = _MAX_IMAGE_BYTES,
         transport: httpx.AsyncBaseTransport | None = None,
+        cache_entries: int = 24,
     ) -> None:
         self._timeout = timeout_seconds
         self._max_bytes = max_bytes
         self._transport = transport
+        # Caché en memoria por URL: la foto del usuario y la prenda se
+        # re-piden en cada intento/reintento — recordar las últimas ahorra
+        # ~1-2s por prueba. Las URLs son inmutables (archivos nuevos cambian
+        # de nombre), así que no hay riesgo de servir contenido viejo.
+        self._cache: dict[str, bytes] = {}
+        self._cache_entries = cache_entries
 
     async def fetch(self, url: str) -> bytes:
+        cached = self._cache.get(url)
+        if cached is not None:
+            return cached
+        data = await self._download(url)
+        if len(self._cache) >= self._cache_entries:
+            self._cache.pop(next(iter(self._cache)))
+        self._cache[url] = data
+        return data
+
+    async def _download(self, url: str) -> bytes:
         try:
             async with (
                 httpx.AsyncClient(
