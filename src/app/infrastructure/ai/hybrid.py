@@ -23,7 +23,19 @@ class HybridTryOnModel:
         garment_image: bytes,
         garment_type: str,
         params: dict[str, Any],
+        extra_garment_image: bytes | None = None,
+        extra_garment_type: str | None = None,
     ) -> bytes:
+        # Outfit de 2 prendas: siempre Gemini (el único que lo hace en 1 pasada)
+        if extra_garment_image is not None:
+            return await self._gemini.generate(
+                person_image=person_image,
+                garment_image=garment_image,
+                garment_type=garment_type,
+                params=params,
+                extra_garment_image=extra_garment_image,
+                extra_garment_type=extra_garment_type,
+            )
         model = self._hosted if garment_type == "lower_body" else self._gemini
         return await model.generate(
             person_image=person_image,

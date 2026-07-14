@@ -25,11 +25,19 @@ class GenerateTryOnUseCase:
     async def execute(self, request: TryOnRequest) -> TryOnResponse:
         person_image = await self._fetcher.fetch(str(request.person_image_url))
         garment_image = await self._fetcher.fetch(str(request.garment_image_url))
+        # Outfit en una llamada: segunda prenda opcional (torso + pierna juntos)
+        extra_garment_image = None
+        if request.extra_garment_image_url is not None:
+            extra_garment_image = await self._fetcher.fetch(
+                str(request.extra_garment_image_url)
+            )
         generated = await self._model.generate(
             person_image=person_image,
             garment_image=garment_image,
             garment_type=request.garment_type,
             params=request.params,
+            extra_garment_image=extra_garment_image,
+            extra_garment_type=request.extra_garment_type,
         )
 
         key: str | None = None

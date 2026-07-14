@@ -17,5 +17,7 @@ class StubTryOnModel:
         garment_image: bytes,
         garment_type: str,
         params: dict[str, Any],
+        extra_garment_image: bytes | None = None,
+        extra_garment_type: str | None = None,
     ) -> bytes:
         return person_image

@@ -173,7 +173,14 @@ class HostedTryOnModel:
         garment_image: bytes,
         garment_type: str,
         params: dict[str, Any],
+        extra_garment_image: bytes | None = None,
+        extra_garment_type: str | None = None,
     ) -> bytes:
+        if extra_garment_image is not None:
+            raise DomainError(
+                "El outfit en una llamada solo está soportado por el backend gemini",
+                "OUTFIT_NOT_SUPPORTED",
+            )
         ref = self._client.model_ref.lower()
         if "idm-vton" in ref:
             category = _IDM_VTON_CATEGORIES.get(garment_type, "upper_body")

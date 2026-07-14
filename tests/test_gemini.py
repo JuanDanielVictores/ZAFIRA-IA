@@ -109,7 +109,9 @@ class FakeGeminiClient:
     def __init__(self) -> None:
         self.calls: list[dict] = []
 
-    async def generate(self, *, prompt: str, images: list[bytes]) -> bytes:
+    async def generate(
+        self, *, prompt: str, images: list[bytes], temperature: float = 0.35
+    ) -> bytes:
         self.calls.append({"prompt": prompt, "images": images})
         return b"composited"
 
@@ -145,6 +147,27 @@ async def test_tryon_prompt_locks_person_identity_to_first_image() -> None:
     assert "image 1" in prompt and "image 2" in prompt
     assert "discard" in prompt or "ignore" in prompt
     assert "face" in prompt
+
+
+async def test_tryon_outfit_single_call_sends_three_images() -> None:
+    fake = FakeGeminiClient()
+    model = GeminiTryOnModel(client=fake)
+
+    result = await model.generate(
+        person_image=b"person",
+        garment_image=b"shirt",
+        garment_type="upper_body",
+        params={"garment_des": "Camisa Azul", "extra_garment_des": "Jean Recto"},
+        extra_garment_image=b"pants",
+        extra_garment_type="lower_body",
+    )
+
+    assert result == b"composited"
+    assert fake.calls[0]["images"] == [b"person", b"shirt", b"pants"]
+    prompt = fake.calls[0]["prompt"]
+    assert "IMAGE 3" in prompt
+    assert "BOTH" in prompt
+    assert "Camisa Azul" in prompt and "Jean Recto" in prompt
 
 
 async def test_tryon_model_honors_prompt_override() -> None:

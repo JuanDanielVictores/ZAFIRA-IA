@@ -19,6 +19,14 @@ class TryOnRequest(BaseModel):
     person_image_url: HttpUrl = Field(description="URL of the avatar or person photo")
     garment_image_url: HttpUrl = Field(description="URL of the garment product image")
     garment_type: GarmentType = Field(description="Garment category for the try-on model")
+    # Outfit completo en UNA generación: segunda prenda opcional. Ahorra la
+    # mitad del tiempo y del costo frente al encadenado de dos llamadas.
+    extra_garment_image_url: HttpUrl | None = Field(
+        default=None, description="Optional second garment for a full outfit in one pass"
+    )
+    extra_garment_type: GarmentType | None = Field(
+        default=None, description="Garment category of the second garment"
+    )
     params: dict[str, Any] = Field(
         default_factory=dict, description="Backend-specific generation parameters"
     )

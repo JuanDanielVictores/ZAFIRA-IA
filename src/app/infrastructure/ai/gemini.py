@@ -63,6 +63,46 @@ TRYON_PROMPT_TEMPLATE = (
     "output. Return only the final image."
 )
 
+# Outfit completo en UNA generación: tres imágenes (persona + torso + pierna).
+# Hereda todas las reglas del prompt individual que arreglaron bugs reales:
+# identidad pixel-fiel, ignorar al modelo de la tienda, remover lo original,
+# no tocar calzado/accesorios y prohibido devolver la imagen sin cambios.
+OUTFIT_PROMPT_TEMPLATE = (
+    "Virtual try-on task with three input images.\n"
+    "IMAGE 1 is the ONLY real person. It is the sole source of identity. You must "
+    "keep this person's face, facial features, facial structure, skin tone, hair, "
+    "eyes, expression, body and background EXACTLY as they are — pixel-faithful. "
+    "Never alter, beautify, swap, blend or regenerate the face or head of IMAGE 1.\n"
+    "IMAGE 2 is a {garment_a} garment product photo. IMAGE 3 is a {garment_b} "
+    "garment product photo. Use them ONLY as clothing references: extract each "
+    "garment and nothing else. If IMAGE 2 or IMAGE 3 shows a model, mannequin, "
+    "face, head, hands or any other person, completely ignore and discard them — "
+    "do NOT transfer any facial features, skin or body from those images onto "
+    "the result. If a garment photo shows several layered garments, the target "
+    "is the OUTERMOST, TOP layer.\n"
+    "Output: the person from IMAGE 1, unchanged, now wearing BOTH new garments "
+    "AT THE SAME TIME: the {garment_a} garment from IMAGE 2 INSTEAD OF their "
+    "current {garment_a} clothing, and the {garment_b} garment from IMAGE 3 "
+    "INSTEAD OF their current {garment_b} clothing. CRITICAL: first completely "
+    "REMOVE the person's original {garment_a} AND {garment_b} clothing — "
+    "including collar, sleeves, cuffs, waistband and hems — then dress them "
+    "with the two new garments. No fabric of the original clothes may remain "
+    "visible anywhere: no layering, no stacking. If a new garment covers less "
+    "skin than the original, render the newly exposed skin naturally.\n"
+    "FOOTWEAR & ACCESSORIES: never add, remove, swap, recolor or restyle the "
+    "person's shoes, socks, hat, cap, bag, belt, watch, glasses or any "
+    "accessory — keep them EXACTLY as in IMAGE 1. If IMAGE 2 or IMAGE 3 shows "
+    "a model wearing shoes or accessories, IGNORE those completely.\n"
+    "MANDATORY: BOTH garments MUST be clearly and visibly worn by the person "
+    "in the output. Returning the person with only ONE of the two garments "
+    "applied, or unchanged, is an INCORRECT result — the double swap must "
+    "always happen, EVEN IF a new garment is the same kind of clothing or the "
+    "same color as what the person already wears: you must still perform both "
+    "replacements and accurately reproduce the exact color, cut, fit and "
+    "details of the garments in IMAGE 2 and IMAGE 3. Return only the final "
+    "image."
+)
+
 AVATAR_PROMPT = (
     "Generate a clean, semi-realistic avatar portrait of the person in the image. "
     "Preserve identity and facial features. Neutral studio background. "
@@ -86,6 +126,33 @@ def _detect_mime(image: bytes) -> str:
     return "image/jpeg"
 
 
+# Lado máximo enviado a Gemini. Las fotos de teléfono llegan en 3-12 MB;
+# reducirlas baja segundos de subida/procesamiento sin afectar la calidad
+# del try-on (Gemini genera a ~1024px de todos modos).
+_MAX_IMAGE_SIDE = 1280
+
+
+def _shrink_image(image: bytes) -> bytes:
+    """Reduce la imagen a _MAX_IMAGE_SIDE si es más grande; si algo falla,
+    devuelve los bytes originales (nunca rompe una generación por esto)."""
+    try:
+        from io import BytesIO
+
+        from PIL import Image
+
+        source = Image.open(BytesIO(image))
+        if max(source.size) <= _MAX_IMAGE_SIDE:
+            return image
+        source.thumbnail((_MAX_IMAGE_SIDE, _MAX_IMAGE_SIDE))
+        if source.mode not in ("RGB", "L"):
+            source = source.convert("RGB")
+        output = BytesIO()
+        source.save(output, format="JPEG", quality=90)
+        return output.getvalue()
+    except Exception:
+        return image
+
+
 class GeminiImageClient:
     def __init__(
         self,
@@ -107,6 +174,7 @@ class GeminiImageClient:
     ) -> bytes:
         parts: list[dict[str, Any]] = [{"text": prompt}]
         for image in images:
+            image = _shrink_image(image)
             parts.append(
                 {
                     "inline_data": {
@@ -192,7 +260,19 @@ class GeminiTryOnModel:
         garment_image: bytes,
         garment_type: str,
         params: dict[str, Any],
+        extra_garment_image: bytes | None = None,
+        extra_garment_type: str | None = None,
     ) -> bytes:
+        # Outfit completo (torso + pierna) en UNA generación: mitad de tiempo
+        # y de costo frente al encadenado de dos llamadas.
+        if extra_garment_image is not None:
+            prompt = params.get("prompt") or self._outfit_prompt(
+                garment_type, extra_garment_type, params
+            )
+            return await self._generate_with_noop_guard(
+                prompt, [person_image, garment_image, extra_garment_image]
+            )
+
         label = _GARMENT_LABELS.get(garment_type, "upper-body")
         prompt = params.get("prompt")
         if not prompt:
@@ -236,9 +316,36 @@ class GeminiTryOnModel:
                     f'is: "{garment_des}". Reproduce that exact garment on the person.'
                 )
 
-        result = await self._client.generate(
-            prompt=prompt, images=[person_image, garment_image]
+        return await self._generate_with_noop_guard(
+            prompt, [person_image, garment_image]
         )
+
+    def _outfit_prompt(
+        self,
+        garment_type: str,
+        extra_garment_type: str | None,
+        params: dict[str, Any],
+    ) -> str:
+        garment_a = _GARMENT_LABELS.get(garment_type, "upper-body")
+        garment_b = _GARMENT_LABELS.get(extra_garment_type or "lower_body", "lower-body")
+        prompt = OUTFIT_PROMPT_TEMPLATE.format(garment_a=garment_a, garment_b=garment_b)
+        garment_des = str(params.get("garment_des") or "").strip()
+        if garment_des:
+            prompt += (
+                f'\nThe specific {garment_a} garment in IMAGE 2 is: "{garment_des}". '
+                f"Reproduce that exact garment on the person."
+            )
+        extra_des = str(params.get("extra_garment_des") or "").strip()
+        if extra_des:
+            prompt += (
+                f'\nThe specific {garment_b} garment in IMAGE 3 is: "{extra_des}". '
+                f"Reproduce that exact garment on the person."
+            )
+        return prompt
+
+    async def _generate_with_noop_guard(self, prompt: str, images: list[bytes]) -> bytes:
+        person_image = images[0]
+        result = await self._client.generate(prompt=prompt, images=images)
         # Guardia anti no-op: si la prenda no se aplico (salida casi identica a
         # la foto de entrada), reintentar UNA vez con mas temperatura para
         # forzar un resultado distinto.
@@ -246,7 +353,7 @@ class GeminiTryOnModel:
         if base_diff < _NOOP_DIFF_THRESHOLD:
             retry = await self._client.generate(
                 prompt=prompt,
-                images=[person_image, garment_image],
+                images=images,
                 temperature=0.7,
             )
             # Quedarse con el reintento solo si de verdad cambio algo mas
