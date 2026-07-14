@@ -28,6 +28,11 @@ TRYON_PROMPT_TEMPLATE = (
     "jacket or coat over a shirt or t-shirt), the target garment is the "
     "OUTERMOST, TOP layer (the jacket/coat) — extract that one and IGNORE any "
     "inner shirt, t-shirt or top visible underneath it.\n"
+    "ORIENTATION: if IMAGE 2 shows the garment from the BACK or from the SIDE, "
+    "use it only to learn the garment's color, fabric and design, and infer its "
+    "front realistically. The person in IMAGE 1 keeps THEIR exact pose and "
+    "camera angle — NEVER mirror or copy the orientation of the garment photo "
+    "onto the person.\n"
     "Output: the person from IMAGE 1, unchanged, now wearing the extracted "
     "{garment_label} garment INSTEAD OF their current {garment_label} clothing. "
     "CRITICAL: first completely REMOVE the person's original {garment_label} "
@@ -37,7 +42,10 @@ TRYON_PROMPT_TEMPLATE = (
     "shorts replacing long pants, or a t-shirt replacing a jacket), render the "
     "newly exposed skin naturally: the old garment must be FULLY gone, with no "
     "cuffs, hems, waistband, sleeves or fabric of the original peeking out "
-    "below, above or beside the new one. Replace ONLY the {garment_label} "
+    "below, above or beside the new one. A COMMON MISTAKE is drawing the new "
+    "garment ON TOP of the original one, leaving the original collar, sleeves "
+    "or hem visible — that is INCORRECT and must never happen. Replace ONLY "
+    "the {garment_label} "
     "clothing. ALL other clothing the person wears (shirts, pants, shoes, "
     "accessories) must remain EXACTLY as in IMAGE 1 — same fit, same color, "
     "same shape, pixel-faithful, with no restyling or redesign whatsoever.\n"
@@ -79,7 +87,9 @@ OUTFIT_PROMPT_TEMPLATE = (
     "face, head, hands or any other person, completely ignore and discard them — "
     "do NOT transfer any facial features, skin or body from those images onto "
     "the result. If a garment photo shows several layered garments, the target "
-    "is the OUTERMOST, TOP layer.\n"
+    "is the OUTERMOST, TOP layer. If a garment photo shows the garment from "
+    "the BACK or SIDE, use it only for color/fabric/design and infer its front "
+    "realistically — the person keeps THEIR exact pose and camera angle.\n"
     "Output: the person from IMAGE 1, unchanged, now wearing BOTH new garments "
     "AT THE SAME TIME: the {garment_a} garment from IMAGE 2 INSTEAD OF their "
     "current {garment_a} clothing, and the {garment_b} garment from IMAGE 3 "
@@ -87,8 +97,11 @@ OUTFIT_PROMPT_TEMPLATE = (
     "REMOVE the person's original {garment_a} AND {garment_b} clothing — "
     "including collar, sleeves, cuffs, waistband and hems — then dress them "
     "with the two new garments. No fabric of the original clothes may remain "
-    "visible anywhere: no layering, no stacking. If a new garment covers less "
-    "skin than the original, render the newly exposed skin naturally.\n"
+    "visible anywhere: no layering, no stacking. A COMMON MISTAKE is drawing "
+    "a new garment ON TOP of the original one, leaving the original collar, "
+    "sleeves or hem visible — that is INCORRECT and must never happen. If a "
+    "new garment covers less skin than the original, render the newly exposed "
+    "skin naturally.\n"
     "FOOTWEAR & ACCESSORIES: never add, remove, swap, recolor or restyle the "
     "person's shoes, socks, hat, cap, bag, belt, watch, glasses or any "
     "accessory — keep them EXACTLY as in IMAGE 1. If IMAGE 2 or IMAGE 3 shows "
@@ -132,18 +145,19 @@ def _detect_mime(image: bytes) -> str:
 _MAX_IMAGE_SIDE = 1280
 
 
-def _shrink_image(image: bytes) -> bytes:
-    """Reduce la imagen a _MAX_IMAGE_SIDE si es más grande; si algo falla,
-    devuelve los bytes originales (nunca rompe una generación por esto)."""
+def _shrink_image(image: bytes, max_side: int | None = None) -> bytes:
+    """Reduce la imagen a max_side (default _MAX_IMAGE_SIDE) si es más grande;
+    si algo falla, devuelve los bytes originales (nunca rompe una generación)."""
+    limit = max_side or _MAX_IMAGE_SIDE
     try:
         from io import BytesIO
 
         from PIL import Image
 
         source = Image.open(BytesIO(image))
-        if max(source.size) <= _MAX_IMAGE_SIDE:
+        if max(source.size) <= limit:
             return image
-        source.thumbnail((_MAX_IMAGE_SIDE, _MAX_IMAGE_SIDE))
+        source.thumbnail((limit, limit))
         if source.mode not in ("RGB", "L"):
             source = source.convert("RGB")
         output = BytesIO()
@@ -213,6 +227,43 @@ class GeminiImageClient:
             )
         return self._extract_image(response.json())
 
+    async def generate_text(
+        self, *, prompt: str, images: list[bytes], model: str | None = None
+    ) -> str:
+        """Respuesta de TEXTO sobre imágenes (verificación de calidad con un
+        modelo barato). Nunca genera imagen."""
+        parts: list[dict[str, Any]] = [{"text": prompt}]
+        for image in images:
+            image = _shrink_image(image)
+            parts.append(
+                {
+                    "inline_data": {
+                        "mime_type": _detect_mime(image),
+                        "data": base64.b64encode(image).decode(),
+                    }
+                }
+            )
+        url = f"{self._base_url}/v1beta/models/{model or self._model}:generateContent"
+        async with httpx.AsyncClient(timeout=30, transport=self._transport) as client:
+            response = await client.post(
+                url,
+                json={
+                    "contents": [{"parts": parts}],
+                    # Veredicto de una palabra: determinista y rápido
+                    "generationConfig": {"temperature": 0, "maxOutputTokens": 10},
+                },
+                headers={"x-goog-api-key": self._api_key},
+            )
+        if response.status_code != 200:
+            raise DomainError(
+                f"Gemini text check failed (HTTP {response.status_code})", "PROVIDER_ERROR"
+            )
+        for candidate in response.json().get("candidates", []):
+            for part in candidate.get("content", {}).get("parts", []):
+                if part.get("text"):
+                    return str(part["text"])
+        return ""
+
     @staticmethod
     def _extract_image(data: dict[str, Any]) -> bytes:
         for candidate in data.get("candidates", []):
@@ -248,6 +299,32 @@ def _mean_diff(a: bytes, b: bytes) -> float:
 # no se aplico (no-op) y conviene reintentar una vez.
 _NOOP_DIFF_THRESHOLD = 3.0
 
+# Modelo barato de visión para la verificación de calidad (~1s, ~medio
+# centavo): revisa que las prendas estén puestas y sin la original asomando.
+_VERIFIER_MODEL = "gemini-2.5-flash-lite"
+
+
+def _check_item(label: str, description) -> str:
+    description = str(description or "").strip()
+    return f"the new {label} garment" + (f' ("{description}")' if description else "")
+
+
+def _quality_prompt(checks: list[str]) -> str:
+    # Benévolo a propósito: cada BAD cuesta una regeneración (~12s y $0.04),
+    # así que solo debe dispararse ante fallos EVIDENTES, nunca ante dudas.
+    listed = "; ".join(checks)
+    return (
+        "You are inspecting a virtual try-on image. The person should be "
+        f"wearing: {listed}. Answer 'BAD' ONLY if you are CERTAIN of a clear "
+        "failure: a listed garment is completely absent, or two garments of "
+        "the same type are obviously layered (two collars, a second "
+        "waistband, the old shirt clearly visible under the new one). Small "
+        "imperfections, exact color/style differences from the description, "
+        "or any doubt do NOT count as failures — the description is only "
+        "context. If in doubt, answer 'OK'. Reply with one word only: OK or "
+        "BAD."
+    )
+
 
 class GeminiTryOnModel:
     def __init__(self, *, client: GeminiImageClient) -> None:
@@ -269,8 +346,18 @@ class GeminiTryOnModel:
             prompt = params.get("prompt") or self._outfit_prompt(
                 garment_type, extra_garment_type, params
             )
-            return await self._generate_with_noop_guard(
-                prompt, [person_image, garment_image, extra_garment_image]
+            checks = [
+                _check_item(
+                    _GARMENT_LABELS.get(garment_type, "upper-body"),
+                    params.get("garment_des"),
+                ),
+                _check_item(
+                    _GARMENT_LABELS.get(extra_garment_type or "lower_body", "lower-body"),
+                    params.get("extra_garment_des"),
+                ),
+            ]
+            return await self._generate_with_quality_guard(
+                prompt, [person_image, garment_image, extra_garment_image], checks
             )
 
         label = _GARMENT_LABELS.get(garment_type, "upper-body")
@@ -316,8 +403,10 @@ class GeminiTryOnModel:
                     f'is: "{garment_des}". Reproduce that exact garment on the person.'
                 )
 
-        return await self._generate_with_noop_guard(
-            prompt, [person_image, garment_image]
+        return await self._generate_with_quality_guard(
+            prompt,
+            [person_image, garment_image],
+            [_check_item(label, params.get("garment_des"))],
         )
 
     def _outfit_prompt(
@@ -343,23 +432,76 @@ class GeminiTryOnModel:
             )
         return prompt
 
-    async def _generate_with_noop_guard(self, prompt: str, images: list[bytes]) -> bytes:
-        person_image = images[0]
-        result = await self._client.generate(prompt=prompt, images=images)
-        # Guardia anti no-op: si la prenda no se aplico (salida casi identica a
-        # la foto de entrada), reintentar UNA vez con mas temperatura para
-        # forzar un resultado distinto.
-        base_diff = _mean_diff(result, person_image)
-        if base_diff < _NOOP_DIFF_THRESHOLD:
-            retry = await self._client.generate(
-                prompt=prompt,
-                images=images,
-                temperature=0.7,
+    async def _passes_quality_check(self, result: bytes, checks: list[str]) -> bool:
+        """Inspector semántico: un modelo barato mira el resultado y confirma
+        que las prendas están puestas y sin la original asomando (layering).
+        Desactivable con TRYON_QUALITY_CHECK=false (modo máxima velocidad)."""
+        import os
+
+        if os.getenv("TRYON_QUALITY_CHECK", "true").lower() != "true":
+            return True
+        try:
+            answer = await self._client.generate_text(
+                # Miniatura 512px: para el veredicto basta y ahorra ~2s de subida
+                prompt=_quality_prompt(checks),
+                images=[_shrink_image(result, max_side=512)],
+                model=_VERIFIER_MODEL,
             )
-            # Quedarse con el reintento solo si de verdad cambio algo mas
-            if _mean_diff(retry, person_image) >= base_diff:
-                result = retry
-        return result
+        except Exception:
+            # La verificación jamás debe tumbar una generación ya lograda
+            return True
+        return "bad" not in answer.strip().lower()
+
+    async def _generate_with_quality_guard(
+        self, prompt: str, images: list[bytes], checks: list[str]
+    ) -> bytes:
+        """Genera y valida en DOS capas: píxeles (¿cambió algo respecto a la
+        foto original?) y semántica (¿las prendas están puestas, sin layering?).
+        Máximo UN reintento total para acotar tiempo y costo."""
+        import logging
+        import time
+
+        # El logger de uvicorn siempre es visible en docker logs
+        log = logging.getLogger("uvicorn.error")
+        person_image = images[0]
+
+        started = time.monotonic()
+        result = await self._client.generate(prompt=prompt, images=images)
+        gen_seconds = time.monotonic() - started
+
+        base_diff = _mean_diff(result, person_image)
+        started = time.monotonic()
+        passed = base_diff >= _NOOP_DIFF_THRESHOLD and await self._passes_quality_check(
+            result, checks
+        )
+        check_seconds = time.monotonic() - started
+        log.info(
+            "tryon guard: gen=%.1fs diff=%.1f check=%.1fs verdict=%s",
+            gen_seconds,
+            base_diff,
+            check_seconds,
+            "OK" if passed else "RETRY",
+        )
+        if passed:
+            return result
+
+        # No-op o prenda mal aplicada: reintentar UNA vez con más temperatura
+        started = time.monotonic()
+        retry = await self._client.generate(prompt=prompt, images=images, temperature=0.7)
+        retry_diff = _mean_diff(retry, person_image)
+        retry_passed = retry_diff >= _NOOP_DIFF_THRESHOLD and await self._passes_quality_check(
+            retry, checks
+        )
+        log.info(
+            "tryon guard retry: %.1fs diff=%.1f verdict=%s",
+            time.monotonic() - started,
+            retry_diff,
+            "OK" if retry_passed else "BEST-EFFORT",
+        )
+        if retry_passed:
+            return retry
+        # Ninguno pasó la inspección: mejor esfuerzo (el que más cambió)
+        return retry if retry_diff >= base_diff else result
 
 
 class GeminiAvatarModel:

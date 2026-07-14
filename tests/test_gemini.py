@@ -106,14 +106,23 @@ async def test_generate_other_4xx_raises_provider_error() -> None:
 
 
 class FakeGeminiClient:
-    def __init__(self) -> None:
+    def __init__(self, check_answers: list[str] | None = None) -> None:
         self.calls: list[dict] = []
+        self.text_calls: list[dict] = []
+        # Respuestas del inspector de calidad, en orden; default: siempre OK
+        self._check_answers = list(check_answers or [])
 
     async def generate(
         self, *, prompt: str, images: list[bytes], temperature: float = 0.35
     ) -> bytes:
         self.calls.append({"prompt": prompt, "images": images})
         return b"composited"
+
+    async def generate_text(
+        self, *, prompt: str, images: list[bytes], model: str | None = None
+    ) -> str:
+        self.text_calls.append({"prompt": prompt, "model": model})
+        return self._check_answers.pop(0) if self._check_answers else "OK"
 
 
 async def test_tryon_model_builds_prompt_by_garment_type() -> None:
@@ -147,6 +156,40 @@ async def test_tryon_prompt_locks_person_identity_to_first_image() -> None:
     assert "image 1" in prompt and "image 2" in prompt
     assert "discard" in prompt or "ignore" in prompt
     assert "face" in prompt
+
+
+async def test_tryon_quality_check_bad_triggers_one_retry() -> None:
+    # El inspector dice BAD (prenda encima de la original) en el primer
+    # intento y OK en el reintento: debe generar exactamente 2 veces.
+    fake = FakeGeminiClient(check_answers=["BAD", "OK"])
+    model = GeminiTryOnModel(client=fake)
+
+    result = await model.generate(
+        person_image=b"person",
+        garment_image=b"garment",
+        garment_type="upper_body",
+        params={"garment_des": "Camisa Azul"},
+    )
+
+    assert result == b"composited"
+    assert len(fake.calls) == 2
+    assert len(fake.text_calls) == 2
+    assert "Camisa Azul" in fake.text_calls[0]["prompt"]
+
+
+async def test_tryon_quality_check_ok_generates_once() -> None:
+    fake = FakeGeminiClient(check_answers=["OK"])
+    model = GeminiTryOnModel(client=fake)
+
+    await model.generate(
+        person_image=b"person",
+        garment_image=b"garment",
+        garment_type="upper_body",
+        params={},
+    )
+
+    assert len(fake.calls) == 1
+    assert len(fake.text_calls) == 1
 
 
 async def test_tryon_outfit_single_call_sends_three_images() -> None:
