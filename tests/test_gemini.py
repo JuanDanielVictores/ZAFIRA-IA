@@ -119,9 +119,14 @@ class FakeGeminiClient:
         return b"composited"
 
     async def generate_text(
-        self, *, prompt: str, images: list[bytes], model: str | None = None
+        self,
+        *,
+        prompt: str,
+        images: list[bytes],
+        model: str | None = None,
+        timeout: float | None = None,
     ) -> str:
-        self.text_calls.append({"prompt": prompt, "model": model})
+        self.text_calls.append({"prompt": prompt, "model": model, "timeout": timeout})
         return self._check_answers.pop(0) if self._check_answers else "OK"
 
 

@@ -228,10 +228,16 @@ class GeminiImageClient:
         return self._extract_image(response.json())
 
     async def generate_text(
-        self, *, prompt: str, images: list[bytes], model: str | None = None
+        self,
+        *,
+        prompt: str,
+        images: list[bytes],
+        model: str | None = None,
+        timeout: float | None = None,
     ) -> str:
         """Respuesta de TEXTO sobre imágenes (verificación de calidad con un
-        modelo barato). Nunca genera imagen."""
+        modelo barato). Nunca genera imagen. `timeout` corto para que la
+        verificación jamás alargue el tiempo total de la prueba."""
         parts: list[dict[str, Any]] = [{"text": prompt}]
         for image in images:
             image = _shrink_image(image)
@@ -244,7 +250,9 @@ class GeminiImageClient:
                 }
             )
         url = f"{self._base_url}/v1beta/models/{model or self._model}:generateContent"
-        async with httpx.AsyncClient(timeout=30, transport=self._transport) as client:
+        async with httpx.AsyncClient(
+            timeout=timeout or self._timeout, transport=self._transport
+        ) as client:
             response = await client.post(
                 url,
                 json={
@@ -302,6 +310,10 @@ _NOOP_DIFF_THRESHOLD = 3.0
 # Modelo barato de visión para la verificación de calidad (~1s, ~medio
 # centavo): revisa que las prendas estén puestas y sin la original asomando.
 _VERIFIER_MODEL = "gemini-2.5-flash-lite"
+# Tope de tiempo del inspector: si Flash-Lite está lento hoy y no responde en
+# este plazo, se ACEPTA el resultado (la guardia de píxeles ya validó el
+# no-op). Así la verificación nunca alarga la prueba más de ~unos segundos.
+_VERIFIER_TIMEOUT_SECONDS = 2.5
 
 
 def _check_item(label: str, description) -> str:
@@ -446,9 +458,11 @@ class GeminiTryOnModel:
                 prompt=_quality_prompt(checks),
                 images=[_shrink_image(result, max_side=512)],
                 model=_VERIFIER_MODEL,
+                timeout=_VERIFIER_TIMEOUT_SECONDS,
             )
         except Exception:
-            # La verificación jamás debe tumbar una generación ya lograda
+            # Timeout o error: se acepta el resultado (la guardia de píxeles ya
+            # corrió). La verificación jamás debe tumbar ni alargar una prueba.
             return True
         return "bad" not in answer.strip().lower()
 
