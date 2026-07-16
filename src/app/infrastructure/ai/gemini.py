@@ -287,14 +287,14 @@ class GeminiImageClient:
 def _mean_diff(a: bytes, b: bytes) -> float:
     """Diferencia media de pixeles (0-255) entre dos imagenes reducidas a
     64x64 gris. ~0 = practicamente identicas (la prenda no se aplico)."""
-    from io import BytesIO
-
-    from PIL import Image
-
-    def thumb(data: bytes):
-        return Image.open(BytesIO(data)).convert("L").resize((64, 64))
-
     try:
+        from io import BytesIO
+
+        from PIL import Image
+
+        def thumb(data: bytes):
+            return Image.open(BytesIO(data)).convert("L").resize((64, 64))
+
         ia, ib = thumb(a), thumb(b)
     except Exception:
         return 255.0  # si no se puede comparar, asumir que cambio (no reintentar)
