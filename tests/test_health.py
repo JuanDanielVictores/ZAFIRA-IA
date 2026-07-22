@@ -13,6 +13,13 @@ def test_health() -> None:
     assert "version" in data
 
 
+def test_health_head() -> None:
+    # Monitores de uptime (UptimeRobot) piden HEAD por defecto; sin soporte
+    # explícito, FastAPI responde 405 y el monitor marca el servicio caído.
+    response = client.head("/health")
+    assert response.status_code == 200
+
+
 def test_root() -> None:
     response = client.get("/")
     assert response.status_code == 200

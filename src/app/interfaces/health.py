@@ -7,8 +7,9 @@ from app.interfaces.schemas.health import HealthResponse
 router = APIRouter()
 
 
-@router.get(
+@router.api_route(
     "/health",
+    methods=["GET", "HEAD"],
     response_model=HealthResponse,
     tags=["health"],
     summary="Health check",
