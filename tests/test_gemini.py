@@ -11,7 +11,6 @@ from app.infrastructure.ai.gemini import (
     GeminiImageClient,
     GeminiTryOnModel,
     _detect_mime,
-    _nearest_aspect_ratio,
 )
 
 _PNG = b"\x89PNG\r\n\x1a\nrest"
@@ -22,39 +21,6 @@ def test_detect_mime() -> None:
     assert _detect_mime(_PNG) == "image/png"
     assert _detect_mime(_JPEG) == "image/jpeg"
     assert _detect_mime(b"unknown-bytes") == "image/jpeg"
-
-
-def _png(width: int, height: int) -> bytes:
-    from io import BytesIO
-
-    from PIL import Image
-
-    buffer = BytesIO()
-    Image.new("RGB", (width, height)).save(buffer, format="PNG")
-    return buffer.getvalue()
-
-
-def test_nearest_aspect_ratio_maps_to_supported() -> None:
-    # Foto de celular vertical (9:16) -> Gemini debe respetar esa proporcion
-    # para no aplanar y recortar los pies.
-    assert _nearest_aspect_ratio(_png(720, 1280)) == "9:16"
-    assert _nearest_aspect_ratio(_png(600, 800)) == "3:4"
-    assert _nearest_aspect_ratio(_png(500, 500)) == "1:1"
-    assert _nearest_aspect_ratio(b"not-an-image") is None
-
-
-async def test_generate_sets_output_aspect_ratio_from_first_image() -> None:
-    captured: dict = {}
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        captured["payload"] = json.loads(request.content)
-        return httpx.Response(200, json=_gemini_response(b"image"))
-
-    client = _client_with_transport(handler)
-    await client.generate(prompt="try on", images=[_png(720, 1280), _JPEG])
-
-    image_config = captured["payload"]["generationConfig"]["imageConfig"]
-    assert image_config["aspectRatio"] == "9:16"
 
 
 def _gemini_response(image: bytes | None) -> dict:
@@ -160,9 +126,7 @@ class FakeGeminiClient:
         model: str | None = None,
         timeout: float | None = None,
     ) -> str:
-        self.text_calls.append(
-            {"prompt": prompt, "images": images, "model": model, "timeout": timeout}
-        )
+        self.text_calls.append({"prompt": prompt, "model": model, "timeout": timeout})
         return self._check_answers.pop(0) if self._check_answers else "OK"
 
 
@@ -199,41 +163,6 @@ async def test_tryon_prompt_locks_person_identity_to_first_image() -> None:
     assert "face" in prompt
 
 
-async def test_tryon_prompt_keeps_full_body_framing() -> None:
-    fake = FakeGeminiClient()
-    model = GeminiTryOnModel(client=fake)
-
-    await model.generate(
-        person_image=b"person",
-        garment_image=b"garment",
-        garment_type="upper_body",
-        params={},
-    )
-
-    prompt = fake.calls[0]["prompt"].lower()
-    assert "head to feet" in prompt
-    assert "framing" in prompt
-    assert "never crop" in prompt
-
-
-async def test_outfit_prompt_keeps_full_body_framing() -> None:
-    fake = FakeGeminiClient()
-    model = GeminiTryOnModel(client=fake)
-
-    await model.generate(
-        person_image=b"person",
-        garment_image=b"shirt",
-        garment_type="upper_body",
-        params={},
-        extra_garment_image=b"pants",
-        extra_garment_type="lower_body",
-    )
-
-    prompt = fake.calls[0]["prompt"].lower()
-    assert "head to feet" in prompt
-    assert "both" in prompt
-
-
 async def test_tryon_quality_check_bad_triggers_one_retry() -> None:
     # El inspector dice BAD (prenda encima de la original) en el primer
     # intento y OK en el reintento: debe generar exactamente 2 veces.
@@ -251,42 +180,6 @@ async def test_tryon_quality_check_bad_triggers_one_retry() -> None:
     assert len(fake.calls) == 2
     assert len(fake.text_calls) == 2
     assert "Camisa Azul" in fake.text_calls[0]["prompt"]
-
-
-async def test_quality_check_receives_before_and_after_images() -> None:
-    # El inspector antes/después recibe la foto original Y el resultado, para
-    # poder cazar el no-op de colores parecidos.
-    fake = FakeGeminiClient()
-    model = GeminiTryOnModel(client=fake)
-
-    await model.generate(
-        person_image=b"person",
-        garment_image=b"garment",
-        garment_type="upper_body",
-        params={},
-    )
-
-    assert fake.text_calls[0]["images"] == [b"person", b"composited"]
-    assert "before" in fake.text_calls[0]["prompt"].lower()
-    assert "after" in fake.text_calls[0]["prompt"].lower()
-
-
-async def test_retry_prompt_includes_retry_hint() -> None:
-    # Cuando el inspector marca BAD, el reintento agrega el aviso que empuja
-    # a aplicar la prenda de verdad.
-    fake = FakeGeminiClient(check_answers=["BAD", "OK"])
-    model = GeminiTryOnModel(client=fake)
-
-    await model.generate(
-        person_image=b"person",
-        garment_image=b"garment",
-        garment_type="upper_body",
-        params={},
-    )
-
-    assert len(fake.calls) == 2
-    assert "RETRY NOTE" not in fake.calls[0]["prompt"]
-    assert "RETRY NOTE" in fake.calls[1]["prompt"]
 
 
 async def test_tryon_quality_check_ok_generates_once() -> None:

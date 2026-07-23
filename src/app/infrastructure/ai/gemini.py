@@ -14,65 +14,61 @@ import httpx
 from app.domain.exceptions import DomainError
 
 TRYON_PROMPT_TEMPLATE = (
-    "ROLE: You are an expert virtual try-on retoucher. Perform ONE precise "
-    "garment swap on a real photo and return a single photorealistic image.\n\n"
-    "INPUTS:\n"
-    "- IMAGE 1: the real person. It is the ONLY source of identity and the base "
-    "of the result.\n"
-    "- IMAGE 2: a {garment_label} garment product photo, used ONLY as a clothing "
-    "reference.\n\n"
-    "GOAL: Show the exact person from IMAGE 1 now wearing the {garment_label} "
-    "garment from IMAGE 2, IN PLACE OF their current {garment_label} clothing. "
-    "The new garment must be clearly and visibly worn in the output.\n\n"
-    "KEEP FROM IMAGE 1 — do not change:\n"
-    "1. IDENTITY: face, facial features, facial structure, skin tone, hair, "
-    "eyes, expression and the person's body shape and proportions — "
-    "pixel-faithful. Never alter, beautify, swap, blend or regenerate the face "
-    "or head.\n"
-    "2. POSE, camera angle and BACKGROUND: exactly as in IMAGE 1.\n"
-    "3. FRAMING: keep the SAME framing, composition, zoom and aspect ratio as "
-    "IMAGE 1. If IMAGE 1 shows the person FULL-LENGTH (head to feet), the "
-    "output MUST also show the FULL body from head to feet. Never crop, zoom "
-    "in, re-center or cut off the head, legs, feet or shoes — the feet and "
-    "footwear visible in IMAGE 1 must stay fully visible in the result.\n"
-    "4. EVERYTHING NOT BEING REPLACED: all other clothing, plus the person's "
-    "shoes, socks, hat, cap, bag, belt, watch, glasses and any accessory — keep "
-    "EXACTLY as in IMAGE 1 (same fit, color and shape, pixel-faithful). Never "
-    "add, remove, swap, recolor, restyle or invent any of them.\n\n"
-    "EXTRACT FROM IMAGE 2 — the new garment only:\n"
-    "1. Copy ONLY the {garment_label} garment: its exact color, fabric, "
-    "pattern, cut, collar/neckline, sleeve length and fit.\n"
-    "2. If IMAGE 2 shows a model, mannequin, face, head, hands, shoes or "
-    "accessories, IGNORE and discard them completely — never transfer any face, "
-    "skin, body, footwear or accessory from IMAGE 2 onto the result.\n"
-    "3. If IMAGE 2 shows several layered garments (e.g. a jacket or coat over a "
-    "shirt or t-shirt), the target is the OUTERMOST, TOP layer (the "
-    "jacket/coat) — extract that one and ignore any inner top underneath.\n"
-    "4. If IMAGE 2 shows the garment from the BACK or SIDE, use it only to "
-    "learn color, fabric and design and infer its front realistically. The "
-    "person keeps THEIR exact pose and camera angle — never mirror or copy the "
-    "garment photo's orientation onto the person.\n\n"
-    "REPLACE — do not layer:\n"
-    "First COMPLETELY REMOVE the person's original {garment_label} clothing, "
-    "including its collar, sleeves, cuffs, waistband and hems; then dress them "
-    "in the new garment. No part of the original {garment_label} garment may "
-    "remain visible under, over or beside the new one: no layering, no "
-    "stacking, no leftover collar, sleeve, cuff, waistband or hem peeking out. "
-    "Drawing the new garment ON TOP of the original one is a COMMON MISTAKE and "
-    "is INCORRECT. If the new garment covers less skin than the original (e.g. "
+    "Virtual try-on task with two input images.\n"
+    "IMAGE 1 is the ONLY real person. It is the sole source of identity. You must "
+    "keep this person's face, facial features, facial structure, skin tone, hair, "
+    "eyes, expression, body and background EXACTLY as they are — pixel-faithful. "
+    "Never alter, beautify, swap, blend or regenerate the face or head of IMAGE 1.\n"
+    "IMAGE 2 is a {garment_label} garment product photo. Use it ONLY as a clothing "
+    "reference: extract the {garment_label} garment and nothing else. If IMAGE 2 "
+    "shows a model, mannequin, face, head, hands or any other person, completely "
+    "ignore and discard them — do NOT transfer any facial features, skin or body "
+    "from IMAGE 2 onto the result.\n"
+    "If IMAGE 2 shows the model wearing SEVERAL layered garments (for example a "
+    "jacket or coat over a shirt or t-shirt), the target garment is the "
+    "OUTERMOST, TOP layer (the jacket/coat) — extract that one and IGNORE any "
+    "inner shirt, t-shirt or top visible underneath it.\n"
+    "ORIENTATION: if IMAGE 2 shows the garment from the BACK or from the SIDE, "
+    "use it only to learn the garment's color, fabric and design, and infer its "
+    "front realistically. The person in IMAGE 1 keeps THEIR exact pose and "
+    "camera angle — NEVER mirror or copy the orientation of the garment photo "
+    "onto the person.\n"
+    "Output: the person from IMAGE 1, unchanged, now wearing the extracted "
+    "{garment_label} garment INSTEAD OF their current {garment_label} clothing. "
+    "CRITICAL: first completely REMOVE the person's original {garment_label} "
+    "clothing, then dress them with the new garment. The original garment must "
+    "NOT remain visible under, over or behind the new one — no layering, no "
+    "stacking. If the new garment covers less skin than the original (e.g. "
     "shorts replacing long pants, or a t-shirt replacing a jacket), render the "
-    "newly exposed skin naturally.\n\n"
-    "MANDATORY OUTCOME:\n"
-    "The garment swap MUST happen. Returning IMAGE 1 unchanged, or with the "
-    "person still wearing their original {garment_label} clothing, is a "
-    "FAILURE. This holds EVEN IF the new garment is the same type or color as "
-    "what the person already wears (e.g. jeans for different jeans, or a white "
-    "shirt over an existing white shirt): still perform the replacement and "
-    "reproduce the new garment's exact color, wash, cut, collar, neckline, "
-    "sleeve length, fit and fabric. When the old and new garments look similar, "
-    "focus on their differences in cut, collar and sleeve length so the swap is "
-    "clearly visible.\n"
-    "Return only the final image."
+    "newly exposed skin naturally: the old garment must be FULLY gone, with no "
+    "cuffs, hems, waistband, sleeves or fabric of the original peeking out "
+    "below, above or beside the new one. A COMMON MISTAKE is drawing the new "
+    "garment ON TOP of the original one, leaving the original collar, sleeves "
+    "or hem visible — that is INCORRECT and must never happen. Replace ONLY "
+    "the {garment_label} "
+    "clothing. ALL other clothing the person wears (shirts, pants, shoes, "
+    "accessories) must remain EXACTLY as in IMAGE 1 — same fit, same color, "
+    "same shape, pixel-faithful, with no restyling or redesign whatsoever.\n"
+    "FOOTWEAR & ACCESSORIES: never add, remove, swap, recolor or restyle the "
+    "person's shoes, socks, hat, cap, bag, belt, watch, glasses or any "
+    "accessory — keep them EXACTLY as in IMAGE 1. If IMAGE 2 shows the garment "
+    "on a model wearing shoes or accessories, IGNORE those completely and do "
+    "NOT copy them onto the person. Do not invent footwear or accessories that "
+    "are not already present in IMAGE 1.\n"
+    "MANDATORY: the new {garment_label} garment from IMAGE 2 MUST be clearly "
+    "and visibly worn by the person in the output. Returning IMAGE 1 "
+    "unchanged, or with the person still wearing their original "
+    "{garment_label} clothing, is an INCORRECT result — the garment swap must "
+    "always happen. This applies EVEN IF the new garment is the same kind of "
+    "clothing OR the same color as what the person already wears (e.g. "
+    "swapping jeans for different jeans, or putting a white shirt over an "
+    "existing white shirt): you must still perform the replacement and "
+    "accurately reproduce the exact color, wash, cut, collar, neckline, "
+    "sleeve length, fit and fabric details of the garment in IMAGE 2, not "
+    "keep the original one. When the current and new garments look similar "
+    "(same colour or same type), pay special attention to the differences in "
+    "cut, collar and sleeve length so that the swap is clearly visible in the "
+    "output. Return only the final image."
 )
 
 # Outfit completo en UNA generación: tres imágenes (persona + torso + pierna).
@@ -80,57 +76,44 @@ TRYON_PROMPT_TEMPLATE = (
 # identidad pixel-fiel, ignorar al modelo de la tienda, remover lo original,
 # no tocar calzado/accesorios y prohibido devolver la imagen sin cambios.
 OUTFIT_PROMPT_TEMPLATE = (
-    "ROLE: You are an expert virtual try-on retoucher. Perform TWO precise "
-    "garment swaps on a real photo, at the same time, and return a single "
-    "photorealistic image.\n\n"
-    "INPUTS:\n"
-    "- IMAGE 1: the real person. It is the ONLY source of identity and the base "
-    "of the result.\n"
-    "- IMAGE 2: a {garment_a} garment product photo. IMAGE 3: a {garment_b} "
-    "garment product photo. Both are used ONLY as clothing references.\n\n"
-    "GOAL: Show the exact person from IMAGE 1 now wearing BOTH new garments AT "
-    "THE SAME TIME: the {garment_a} garment from IMAGE 2 IN PLACE OF their "
-    "current {garment_a} clothing, and the {garment_b} garment from IMAGE 3 IN "
-    "PLACE OF their current {garment_b} clothing. Both new garments must be "
-    "clearly and visibly worn together in the output.\n\n"
-    "KEEP FROM IMAGE 1 — do not change:\n"
-    "1. IDENTITY: face, facial features, facial structure, skin tone, hair, "
-    "eyes, expression and the person's body shape and proportions — "
-    "pixel-faithful. Never alter, beautify, swap, blend or regenerate the face "
-    "or head.\n"
-    "2. POSE, camera angle and BACKGROUND: exactly as in IMAGE 1.\n"
-    "3. FRAMING: keep the SAME framing, composition, zoom and aspect ratio as "
-    "IMAGE 1. If IMAGE 1 shows the person FULL-LENGTH (head to feet), the "
-    "output MUST also show the FULL body from head to feet. Never crop, zoom "
-    "in, re-center or cut off the head, legs, feet or shoes.\n"
-    "4. Shoes, socks, hat, cap, bag, belt, watch, glasses and any accessory: "
-    "keep EXACTLY as in IMAGE 1. Never add, remove, swap, recolor or restyle "
-    "them.\n\n"
-    "EXTRACT FROM IMAGE 2 AND IMAGE 3 — the new garments only:\n"
-    "1. Use each garment photo ONLY to copy that garment's exact color, fabric, "
-    "pattern, cut, collar/neckline, sleeve length and fit.\n"
-    "2. If IMAGE 2 or IMAGE 3 shows a model, mannequin, face, head, hands, "
-    "shoes or accessories, IGNORE and discard them completely — never transfer "
-    "any face, skin, body, footwear or accessory onto the result.\n"
-    "3. If a garment photo shows several layered garments, the target is the "
-    "OUTERMOST, TOP layer. If a garment photo shows the garment from the BACK "
-    "or SIDE, use it only for color, fabric and design and infer its front "
-    "realistically — the person keeps THEIR exact pose and camera angle.\n\n"
-    "REPLACE — do not layer:\n"
-    "First COMPLETELY REMOVE the person's original {garment_a} AND {garment_b} "
-    "clothing — including collars, sleeves, cuffs, waistbands and hems — then "
-    "dress them in the two new garments. No fabric of the original clothes may "
-    "remain visible anywhere: no layering, no stacking, no leftover collar, "
-    "sleeve, cuff, waistband or hem. Drawing a new garment ON TOP of the "
-    "original one is INCORRECT. If a new garment covers less skin than the "
-    "original, render the newly exposed skin naturally.\n\n"
-    "MANDATORY OUTCOME:\n"
-    "BOTH swaps MUST happen. Returning the person unchanged, or with only ONE "
-    "of the two garments applied, is a FAILURE. This holds EVEN IF a new "
-    "garment is the same type or color as what the person already wears: still "
-    "perform BOTH replacements and reproduce each garment's exact color, cut, "
-    "fit and details from IMAGE 2 and IMAGE 3.\n"
-    "Return only the final image."
+    "Virtual try-on task with three input images.\n"
+    "IMAGE 1 is the ONLY real person. It is the sole source of identity. You must "
+    "keep this person's face, facial features, facial structure, skin tone, hair, "
+    "eyes, expression, body and background EXACTLY as they are — pixel-faithful. "
+    "Never alter, beautify, swap, blend or regenerate the face or head of IMAGE 1.\n"
+    "IMAGE 2 is a {garment_a} garment product photo. IMAGE 3 is a {garment_b} "
+    "garment product photo. Use them ONLY as clothing references: extract each "
+    "garment and nothing else. If IMAGE 2 or IMAGE 3 shows a model, mannequin, "
+    "face, head, hands or any other person, completely ignore and discard them — "
+    "do NOT transfer any facial features, skin or body from those images onto "
+    "the result. If a garment photo shows several layered garments, the target "
+    "is the OUTERMOST, TOP layer. If a garment photo shows the garment from "
+    "the BACK or SIDE, use it only for color/fabric/design and infer its front "
+    "realistically — the person keeps THEIR exact pose and camera angle.\n"
+    "Output: the person from IMAGE 1, unchanged, now wearing BOTH new garments "
+    "AT THE SAME TIME: the {garment_a} garment from IMAGE 2 INSTEAD OF their "
+    "current {garment_a} clothing, and the {garment_b} garment from IMAGE 3 "
+    "INSTEAD OF their current {garment_b} clothing. CRITICAL: first completely "
+    "REMOVE the person's original {garment_a} AND {garment_b} clothing — "
+    "including collar, sleeves, cuffs, waistband and hems — then dress them "
+    "with the two new garments. No fabric of the original clothes may remain "
+    "visible anywhere: no layering, no stacking. A COMMON MISTAKE is drawing "
+    "a new garment ON TOP of the original one, leaving the original collar, "
+    "sleeves or hem visible — that is INCORRECT and must never happen. If a "
+    "new garment covers less skin than the original, render the newly exposed "
+    "skin naturally.\n"
+    "FOOTWEAR & ACCESSORIES: never add, remove, swap, recolor or restyle the "
+    "person's shoes, socks, hat, cap, bag, belt, watch, glasses or any "
+    "accessory — keep them EXACTLY as in IMAGE 1. If IMAGE 2 or IMAGE 3 shows "
+    "a model wearing shoes or accessories, IGNORE those completely.\n"
+    "MANDATORY: BOTH garments MUST be clearly and visibly worn by the person "
+    "in the output. Returning the person with only ONE of the two garments "
+    "applied, or unchanged, is an INCORRECT result — the double swap must "
+    "always happen, EVEN IF a new garment is the same kind of clothing or the "
+    "same color as what the person already wears: you must still perform both "
+    "replacements and accurately reproduce the exact color, cut, fit and "
+    "details of the garments in IMAGE 2 and IMAGE 3. Return only the final "
+    "image."
 )
 
 AVATAR_PROMPT = (
@@ -184,40 +167,6 @@ def _shrink_image(image: bytes, max_side: int | None = None) -> bytes:
         return image
 
 
-# Proporciones (width:height) que gemini-2.5-flash-image acepta para la salida.
-_GEMINI_ASPECT_RATIOS = {
-    "1:1": 1.0,
-    "4:5": 0.8,
-    "5:4": 1.25,
-    "3:4": 0.75,
-    "4:3": 4 / 3,
-    "2:3": 2 / 3,
-    "3:2": 1.5,
-    "9:16": 9 / 16,
-    "16:9": 16 / 9,
-}
-
-
-def _nearest_aspect_ratio(image: bytes) -> str | None:
-    """Proporcion soportada por Gemini mas cercana a la de la imagen.
-
-    Se pasa como imageConfig.aspectRatio para que la salida conserve el encuadre
-    de la foto: SIN esto, Gemini normaliza a ~4:5 y en fotos verticales de
-    celular (9:16) recorta las piernas/pies. Si algo falla, devuelve None y la
-    generacion sigue con el comportamiento por defecto.
-    """
-    try:
-        from io import BytesIO
-
-        from PIL import Image
-
-        width, height = Image.open(BytesIO(image)).size
-        ratio = width / height
-    except Exception:
-        return None
-    return min(_GEMINI_ASPECT_RATIOS, key=lambda name: abs(_GEMINI_ASPECT_RATIOS[name] - ratio))
-
-
 class GeminiImageClient:
     def __init__(
         self,
@@ -238,14 +187,8 @@ class GeminiImageClient:
         self, *, prompt: str, images: list[bytes], temperature: float = 0.35
     ) -> bytes:
         parts: list[dict[str, Any]] = [{"text": prompt}]
-        base_aspect: str | None = None
-        for index, image in enumerate(images):
+        for image in images:
             image = _shrink_image(image)
-            # La primera imagen es la persona/base: su proporcion fija la de la
-            # salida para que Gemini NO recorte el cuerpo (por defecto aplana a
-            # ~4:5 y corta piernas/pies en fotos verticales de celular).
-            if index == 0:
-                base_aspect = _nearest_aspect_ratio(image)
             parts.append(
                 {
                     "inline_data": {
@@ -255,19 +198,16 @@ class GeminiImageClient:
                 }
             )
 
-        # Temperatura media-baja: equilibrio entre fidelidad (no alterar prendas
-        # ajenas) y accion (no devolver la imagen sin aplicar la prenda nueva).
-        generation_config: dict[str, Any] = {"temperature": temperature}
-        if base_aspect:
-            generation_config["imageConfig"] = {"aspectRatio": base_aspect}
-
         url = f"{self._base_url}/v1beta/models/{self._model}:generateContent"
         async with httpx.AsyncClient(timeout=self._timeout, transport=self._transport) as client:
             response = await client.post(
                 url,
                 json={
                     "contents": [{"parts": parts}],
-                    "generationConfig": generation_config,
+                    # Temperatura media-baja: equilibrio entre fidelidad (no
+                    # alterar prendas ajenas) y accion (no devolver la imagen
+                    # sin aplicar la prenda nueva)
+                    "generationConfig": {"temperature": temperature},
                 },
                 headers={"x-goog-api-key": self._api_key},
             )
@@ -367,16 +307,6 @@ def _mean_diff(a: bytes, b: bytes) -> float:
 # no se aplico (no-op) y conviene reintentar una vez.
 _NOOP_DIFF_THRESHOLD = 3.0
 
-# Aviso extra para el reintento: cuando el primer intento no aplico la prenda
-# (no-op), empuja a Gemini a cambiarla de verdad en vez de devolver la
-# ropa original. Solo se agrega en el segundo intento.
-_RETRY_HINT = (
-    "\n\nRETRY NOTE: a previous attempt FAILED and left the person in their "
-    "ORIGINAL clothing. This time you MUST clearly replace the target garment "
-    "with the new one from the reference image, so the result looks visibly "
-    "different in that garment. Do not return the original clothing again."
-)
-
 # Modelo barato de visión para la verificación de calidad (~1s, ~medio
 # centavo): revisa que las prendas estén puestas y sin la original asomando.
 _VERIFIER_MODEL = "gemini-2.5-flash-lite"
@@ -392,23 +322,19 @@ def _check_item(label: str, description) -> str:
 
 
 def _quality_prompt(checks: list[str]) -> str:
-    # Compara ANTES (IMAGE 1) vs DESPUES (IMAGE 2): asi caza el no-op de
-    # colores parecidos, donde la prenda cambio poco pero NO es la nueva.
-    # Sigue benevolo ante dudas: cada BAD cuesta una regeneracion (~12s).
+    # Benévolo a propósito: cada BAD cuesta una regeneración (~12s y $0.04),
+    # así que solo debe dispararse ante fallos EVIDENTES, nunca ante dudas.
     listed = "; ".join(checks)
     return (
-        "You are inspecting a virtual try-on. IMAGE 1 is the person BEFORE; "
-        "IMAGE 2 is the result AFTER. The try-on should have dressed the "
-        f"person so that in IMAGE 2 they clearly wear: {listed}. "
-        "Answer 'BAD' if the swap clearly did NOT happen — for example IMAGE 2 "
-        "still shows essentially the SAME garment as IMAGE 1 (the original "
-        "clothing was kept and the new garment was not applied), or a listed "
-        "garment is missing, or two garments of the same type are layered (two "
-        "collars, a second waistband, the old top under the new one). "
-        "Answer 'OK' if the listed new garment is clearly worn in IMAGE 2. "
-        "Judge only whether the garment became the listed new one; ignore "
-        "background, pose and small color or style nuances. If genuinely "
-        "unsure, answer 'OK'. Reply with one word only: OK or BAD."
+        "You are inspecting a virtual try-on image. The person should be "
+        f"wearing: {listed}. Answer 'BAD' ONLY if you are CERTAIN of a clear "
+        "failure: a listed garment is completely absent, or two garments of "
+        "the same type are obviously layered (two collars, a second "
+        "waistband, the old shirt clearly visible under the new one). Small "
+        "imperfections, exact color/style differences from the description, "
+        "or any doubt do NOT count as failures — the description is only "
+        "context. If in doubt, answer 'OK'. Reply with one word only: OK or "
+        "BAD."
     )
 
 
@@ -518,13 +444,9 @@ class GeminiTryOnModel:
             )
         return prompt
 
-    async def _passes_quality_check(
-        self, person_image: bytes, result: bytes, checks: list[str]
-    ) -> bool:
-        """Inspector semántico ANTES/DESPUÉS: un modelo barato compara la foto
-        original (IMAGE 1) con el resultado (IMAGE 2) y confirma que la prenda
-        nueva sí se aplicó (no que quedó la original) y sin la vieja asomando.
-        Ver ambas imágenes es lo que caza el no-op de colores parecidos.
+    async def _passes_quality_check(self, result: bytes, checks: list[str]) -> bool:
+        """Inspector semántico: un modelo barato mira el resultado y confirma
+        que las prendas están puestas y sin la original asomando (layering).
         Desactivable con TRYON_QUALITY_CHECK=false (modo máxima velocidad)."""
         import os
 
@@ -532,12 +454,9 @@ class GeminiTryOnModel:
             return True
         try:
             answer = await self._client.generate_text(
-                # Miniaturas 512px: para el veredicto basta y ahorra subida
+                # Miniatura 512px: para el veredicto basta y ahorra ~2s de subida
                 prompt=_quality_prompt(checks),
-                images=[
-                    _shrink_image(person_image, max_side=512),
-                    _shrink_image(result, max_side=512),
-                ],
+                images=[_shrink_image(result, max_side=512)],
                 model=_VERIFIER_MODEL,
                 timeout=_VERIFIER_TIMEOUT_SECONDS,
             )
@@ -567,7 +486,7 @@ class GeminiTryOnModel:
         base_diff = _mean_diff(result, person_image)
         started = time.monotonic()
         passed = base_diff >= _NOOP_DIFF_THRESHOLD and await self._passes_quality_check(
-            person_image, result, checks
+            result, checks
         )
         check_seconds = time.monotonic() - started
         log.info(
@@ -581,14 +500,11 @@ class GeminiTryOnModel:
             return result
 
         # No-op o prenda mal aplicada: reintentar UNA vez con más temperatura
-        # y un aviso extra que empuja a aplicar la prenda de verdad.
         started = time.monotonic()
-        retry = await self._client.generate(
-            prompt=prompt + _RETRY_HINT, images=images, temperature=0.7
-        )
+        retry = await self._client.generate(prompt=prompt, images=images, temperature=0.7)
         retry_diff = _mean_diff(retry, person_image)
         retry_passed = retry_diff >= _NOOP_DIFF_THRESHOLD and await self._passes_quality_check(
-            person_image, retry, checks
+            retry, checks
         )
         log.info(
             "tryon guard retry: %.1fs diff=%.1f verdict=%s",
