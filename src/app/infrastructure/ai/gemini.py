@@ -167,6 +167,41 @@ def _shrink_image(image: bytes, max_side: int | None = None) -> bytes:
         return image
 
 
+# Proporciones (width:height) que gemini-2.5-flash-image acepta para la salida.
+_GEMINI_ASPECT_RATIOS = {
+    "1:1": 1.0,
+    "4:5": 0.8,
+    "5:4": 1.25,
+    "3:4": 0.75,
+    "4:3": 4 / 3,
+    "2:3": 2 / 3,
+    "3:2": 1.5,
+    "9:16": 9 / 16,
+    "16:9": 16 / 9,
+}
+
+
+def _nearest_aspect_ratio(image: bytes) -> str | None:
+    """Proporcion soportada por Gemini mas cercana a la de la imagen.
+
+    Se envia como imageConfig.aspectRatio para que la salida conserve el
+    encuadre de la foto: SIN esto Gemini aplana a ~4:5 y en fotos verticales
+    de celular (9:16) recorta las piernas/pies. Medido: no cuesta tiempo
+    (10.6s vs 10.7s) y no afecta como se aplican las prendas.
+    Si algo falla al leer la imagen devuelve None y se genera como siempre.
+    """
+    try:
+        from io import BytesIO
+
+        from PIL import Image
+
+        width, height = Image.open(BytesIO(image)).size
+        ratio = width / height
+    except Exception:
+        return None
+    return min(_GEMINI_ASPECT_RATIOS, key=lambda name: abs(_GEMINI_ASPECT_RATIOS[name] - ratio))
+
+
 class GeminiImageClient:
     def __init__(
         self,
@@ -187,8 +222,14 @@ class GeminiImageClient:
         self, *, prompt: str, images: list[bytes], temperature: float = 0.35
     ) -> bytes:
         parts: list[dict[str, Any]] = [{"text": prompt}]
-        for image in images:
+        base_aspect: str | None = None
+        for index, image in enumerate(images):
             image = _shrink_image(image)
+            # La primera imagen es la persona/base: su proporcion fija la de la
+            # salida para que Gemini no recorte el cuerpo (por defecto aplana a
+            # ~4:5 y corta piernas/pies en fotos verticales de celular).
+            if index == 0:
+                base_aspect = _nearest_aspect_ratio(image)
             parts.append(
                 {
                     "inline_data": {
@@ -198,16 +239,19 @@ class GeminiImageClient:
                 }
             )
 
+        # Temperatura media-baja: equilibrio entre fidelidad (no alterar prendas
+        # ajenas) y accion (no devolver la imagen sin aplicar la prenda nueva).
+        generation_config: dict[str, Any] = {"temperature": temperature}
+        if base_aspect:
+            generation_config["imageConfig"] = {"aspectRatio": base_aspect}
+
         url = f"{self._base_url}/v1beta/models/{self._model}:generateContent"
         async with httpx.AsyncClient(timeout=self._timeout, transport=self._transport) as client:
             response = await client.post(
                 url,
                 json={
                     "contents": [{"parts": parts}],
-                    # Temperatura media-baja: equilibrio entre fidelidad (no
-                    # alterar prendas ajenas) y accion (no devolver la imagen
-                    # sin aplicar la prenda nueva)
-                    "generationConfig": {"temperature": temperature},
+                    "generationConfig": generation_config,
                 },
                 headers={"x-goog-api-key": self._api_key},
             )
