@@ -11,6 +11,7 @@ from app.infrastructure.ai.gemini import (
     GeminiImageClient,
     GeminiTryOnModel,
     _detect_mime,
+    _nearest_aspect_ratio,
 )
 
 _PNG = b"\x89PNG\r\n\x1a\nrest"
@@ -21,6 +22,39 @@ def test_detect_mime() -> None:
     assert _detect_mime(_PNG) == "image/png"
     assert _detect_mime(_JPEG) == "image/jpeg"
     assert _detect_mime(b"unknown-bytes") == "image/jpeg"
+
+
+def _png(width: int, height: int) -> bytes:
+    from io import BytesIO
+
+    from PIL import Image
+
+    buffer = BytesIO()
+    Image.new("RGB", (width, height)).save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def test_nearest_aspect_ratio_maps_to_supported() -> None:
+    # Foto de celular vertical (9:16) -> Gemini debe respetar esa proporcion
+    # para no aplanar y recortar los pies.
+    assert _nearest_aspect_ratio(_png(720, 1280)) == "9:16"
+    assert _nearest_aspect_ratio(_png(600, 800)) == "3:4"
+    assert _nearest_aspect_ratio(_png(500, 500)) == "1:1"
+    assert _nearest_aspect_ratio(b"not-an-image") is None
+
+
+async def test_generate_sets_output_aspect_ratio_from_first_image() -> None:
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["payload"] = json.loads(request.content)
+        return httpx.Response(200, json=_gemini_response(b"image"))
+
+    client = _client_with_transport(handler)
+    await client.generate(prompt="try on", images=[_png(720, 1280), _JPEG])
+
+    image_config = captured["payload"]["generationConfig"]["imageConfig"]
+    assert image_config["aspectRatio"] == "9:16"
 
 
 def _gemini_response(image: bytes | None) -> dict:
