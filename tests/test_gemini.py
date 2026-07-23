@@ -163,6 +163,41 @@ async def test_tryon_prompt_locks_person_identity_to_first_image() -> None:
     assert "face" in prompt
 
 
+async def test_tryon_prompt_keeps_full_body_framing() -> None:
+    fake = FakeGeminiClient()
+    model = GeminiTryOnModel(client=fake)
+
+    await model.generate(
+        person_image=b"person",
+        garment_image=b"garment",
+        garment_type="upper_body",
+        params={},
+    )
+
+    prompt = fake.calls[0]["prompt"].lower()
+    assert "head to feet" in prompt
+    assert "framing" in prompt
+    assert "never crop" in prompt
+
+
+async def test_outfit_prompt_keeps_full_body_framing() -> None:
+    fake = FakeGeminiClient()
+    model = GeminiTryOnModel(client=fake)
+
+    await model.generate(
+        person_image=b"person",
+        garment_image=b"shirt",
+        garment_type="upper_body",
+        params={},
+        extra_garment_image=b"pants",
+        extra_garment_type="lower_body",
+    )
+
+    prompt = fake.calls[0]["prompt"].lower()
+    assert "head to feet" in prompt
+    assert "both" in prompt
+
+
 async def test_tryon_quality_check_bad_triggers_one_retry() -> None:
     # El inspector dice BAD (prenda encima de la original) en el primer
     # intento y OK en el reintento: debe generar exactamente 2 veces.
