@@ -324,6 +324,16 @@ def _mean_diff(a: bytes, b: bytes) -> float:
 # no se aplico (no-op) y conviene reintentar una vez.
 _NOOP_DIFF_THRESHOLD = 3.0
 
+# Aviso extra para el reintento: cuando el primer intento no aplico la prenda
+# (no-op), empuja a Gemini a cambiarla de verdad en vez de devolver la
+# ropa original. Solo se agrega en el segundo intento.
+_RETRY_HINT = (
+    "\n\nRETRY NOTE: a previous attempt FAILED and left the person in their "
+    "ORIGINAL clothing. This time you MUST clearly replace the target garment "
+    "with the new one from the reference image, so the result looks visibly "
+    "different in that garment. Do not return the original clothing again."
+)
+
 # Modelo barato de visión para la verificación de calidad (~1s, ~medio
 # centavo): revisa que las prendas estén puestas y sin la original asomando.
 _VERIFIER_MODEL = "gemini-2.5-flash-lite"
@@ -339,19 +349,23 @@ def _check_item(label: str, description) -> str:
 
 
 def _quality_prompt(checks: list[str]) -> str:
-    # Benévolo a propósito: cada BAD cuesta una regeneración (~12s y $0.04),
-    # así que solo debe dispararse ante fallos EVIDENTES, nunca ante dudas.
+    # Compara ANTES (IMAGE 1) vs DESPUES (IMAGE 2): asi caza el no-op de
+    # colores parecidos, donde la prenda cambio poco pero NO es la nueva.
+    # Sigue benevolo ante dudas: cada BAD cuesta una regeneracion (~12s).
     listed = "; ".join(checks)
     return (
-        "You are inspecting a virtual try-on image. The person should be "
-        f"wearing: {listed}. Answer 'BAD' ONLY if you are CERTAIN of a clear "
-        "failure: a listed garment is completely absent, or two garments of "
-        "the same type are obviously layered (two collars, a second "
-        "waistband, the old shirt clearly visible under the new one). Small "
-        "imperfections, exact color/style differences from the description, "
-        "or any doubt do NOT count as failures — the description is only "
-        "context. If in doubt, answer 'OK'. Reply with one word only: OK or "
-        "BAD."
+        "You are inspecting a virtual try-on. IMAGE 1 is the person BEFORE; "
+        "IMAGE 2 is the result AFTER. The try-on should have dressed the "
+        f"person so that in IMAGE 2 they clearly wear: {listed}. "
+        "Answer 'BAD' if the swap clearly did NOT happen — for example IMAGE 2 "
+        "still shows essentially the SAME garment as IMAGE 1 (the original "
+        "clothing was kept and the new garment was not applied), or a listed "
+        "garment is missing, or two garments of the same type are layered (two "
+        "collars, a second waistband, the old top under the new one). "
+        "Answer 'OK' if the listed new garment is clearly worn in IMAGE 2. "
+        "Judge only whether the garment became the listed new one; ignore "
+        "background, pose and small color or style nuances. If genuinely "
+        "unsure, answer 'OK'. Reply with one word only: OK or BAD."
     )
 
 
@@ -461,9 +475,13 @@ class GeminiTryOnModel:
             )
         return prompt
 
-    async def _passes_quality_check(self, result: bytes, checks: list[str]) -> bool:
-        """Inspector semántico: un modelo barato mira el resultado y confirma
-        que las prendas están puestas y sin la original asomando (layering).
+    async def _passes_quality_check(
+        self, person_image: bytes, result: bytes, checks: list[str]
+    ) -> bool:
+        """Inspector semántico ANTES/DESPUÉS: un modelo barato compara la foto
+        original (IMAGE 1) con el resultado (IMAGE 2) y confirma que la prenda
+        nueva sí se aplicó (no que quedó la original) y sin la vieja asomando.
+        Ver ambas imágenes es lo que caza el no-op de colores parecidos.
         Desactivable con TRYON_QUALITY_CHECK=false (modo máxima velocidad)."""
         import os
 
@@ -471,9 +489,12 @@ class GeminiTryOnModel:
             return True
         try:
             answer = await self._client.generate_text(
-                # Miniatura 512px: para el veredicto basta y ahorra ~2s de subida
+                # Miniaturas 512px: para el veredicto basta y ahorra subida
                 prompt=_quality_prompt(checks),
-                images=[_shrink_image(result, max_side=512)],
+                images=[
+                    _shrink_image(person_image, max_side=512),
+                    _shrink_image(result, max_side=512),
+                ],
                 model=_VERIFIER_MODEL,
                 timeout=_VERIFIER_TIMEOUT_SECONDS,
             )
@@ -503,7 +524,7 @@ class GeminiTryOnModel:
         base_diff = _mean_diff(result, person_image)
         started = time.monotonic()
         passed = base_diff >= _NOOP_DIFF_THRESHOLD and await self._passes_quality_check(
-            result, checks
+            person_image, result, checks
         )
         check_seconds = time.monotonic() - started
         log.info(
@@ -517,11 +538,14 @@ class GeminiTryOnModel:
             return result
 
         # No-op o prenda mal aplicada: reintentar UNA vez con más temperatura
+        # y un aviso extra que empuja a aplicar la prenda de verdad.
         started = time.monotonic()
-        retry = await self._client.generate(prompt=prompt, images=images, temperature=0.7)
+        retry = await self._client.generate(
+            prompt=prompt + _RETRY_HINT, images=images, temperature=0.7
+        )
         retry_diff = _mean_diff(retry, person_image)
         retry_passed = retry_diff >= _NOOP_DIFF_THRESHOLD and await self._passes_quality_check(
-            retry, checks
+            person_image, retry, checks
         )
         log.info(
             "tryon guard retry: %.1fs diff=%.1f verdict=%s",

@@ -126,7 +126,9 @@ class FakeGeminiClient:
         model: str | None = None,
         timeout: float | None = None,
     ) -> str:
-        self.text_calls.append({"prompt": prompt, "model": model, "timeout": timeout})
+        self.text_calls.append(
+            {"prompt": prompt, "images": images, "model": model, "timeout": timeout}
+        )
         return self._check_answers.pop(0) if self._check_answers else "OK"
 
 
@@ -215,6 +217,42 @@ async def test_tryon_quality_check_bad_triggers_one_retry() -> None:
     assert len(fake.calls) == 2
     assert len(fake.text_calls) == 2
     assert "Camisa Azul" in fake.text_calls[0]["prompt"]
+
+
+async def test_quality_check_receives_before_and_after_images() -> None:
+    # El inspector antes/después recibe la foto original Y el resultado, para
+    # poder cazar el no-op de colores parecidos.
+    fake = FakeGeminiClient()
+    model = GeminiTryOnModel(client=fake)
+
+    await model.generate(
+        person_image=b"person",
+        garment_image=b"garment",
+        garment_type="upper_body",
+        params={},
+    )
+
+    assert fake.text_calls[0]["images"] == [b"person", b"composited"]
+    assert "before" in fake.text_calls[0]["prompt"].lower()
+    assert "after" in fake.text_calls[0]["prompt"].lower()
+
+
+async def test_retry_prompt_includes_retry_hint() -> None:
+    # Cuando el inspector marca BAD, el reintento agrega el aviso que empuja
+    # a aplicar la prenda de verdad.
+    fake = FakeGeminiClient(check_answers=["BAD", "OK"])
+    model = GeminiTryOnModel(client=fake)
+
+    await model.generate(
+        person_image=b"person",
+        garment_image=b"garment",
+        garment_type="upper_body",
+        params={},
+    )
+
+    assert len(fake.calls) == 2
+    assert "RETRY NOTE" not in fake.calls[0]["prompt"]
+    assert "RETRY NOTE" in fake.calls[1]["prompt"]
 
 
 async def test_tryon_quality_check_ok_generates_once() -> None:
